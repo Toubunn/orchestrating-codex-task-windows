@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrating Codex Task Windows"
+  short_description: "Coordinate independent Codex worker tasks"
+  default_prompt: "Use $orchestrating-codex-task-windows to split this project across independent Codex worker tasks and collect their reports."
