@@ -10,6 +10,12 @@ Existing suitable capability
 
 Report reduced continuity or isolation honestly. The loss of an optional capability may lower recovery or concurrency quality, but it does not block an otherwise authorized task.
 
+## Granted authority and command failures
+
+Before attempting elevation, inspect the granted authority or permission profile. Under full/unrestricted access, do not request elevation or approval. Do not reconfirm authority already granted.
+
+Command or process failure alone is not evidence of missing permission. First diagnose cwd, path, quoting, shell, and process startup, including command existence and an alternate ordinary launch method. Request user authority only when a new authority is actually missing and required by the task.
+
 ## Environment mapping
 
 Use projectless execution for a no-file task when the host supports it. For file-writing work, `worktree_when_writing` is a preference, not a prerequisite. If no worktree is available, choose an isolated copy, non-overlapping write paths, or serialized execution according to the risk of concurrent edits.
@@ -44,9 +50,34 @@ If a worker task must continue later, it may keep a scoped continuation note usi
 
 Every worker contract must include `report_required: true` and a concrete parent message channel. On normal completion or blocking, the worker actively sends the terminal report before ending; merely leaving text in the worker window is not delivery.
 
-If direct task-to-task messaging is unavailable, the worker leaves the same structured final result visible in its task and marks delivery as blocked if it knows the immediate coordinator did not receive the message. The parent performs one bounded collection check after the worker’s completion event or host signal. It does not routinely poll unchanged tasks. If only a root channel is available, mark degraded routing and do not claim direct delivery to the immediate coordinator.
+If the host-created implicit reply-to-source route is unavailable and no machine result or independent query confirms the current coordinator's exact ID, the worker leaves the same structured final result visible in its task. It never substitutes an incoming parent or root ID as the coordinator's own ID. The parent performs one bounded collection check after the worker’s completion event or host signal. It does not routinely poll unchanged tasks. Mark degraded routing, and report delivery as blocked if the immediate coordinator did not receive the result. A root channel remains supplemental only and cannot justify a claim of direct delivery.
 
 The parent verifies the collected result and records whether the required report was actually received. It must not represent an undelivered worker result as normal completion.
+
+## Combined notification protocol
+
+The worker actively sends the terminal report to its immediate coordinator.
+The parent waits for events across the current active-task set rather than
+inspecting unchanged tasks. A matching message or completion event may arrive
+first; whichever arrives first wakes the parent. The parent correlates the
+delivery by `task_id` and `thread_id`, validates the structured report, and
+sets `report_received: true` only for a valid matching report. It records one
+terminal result and deduplicates the other matching event, so the protocol does
+not permit routine polling. The parent creates a dependent reviewer only for
+the matching implementation task after its artifact is accessible.
+
+## Review source branches
+
+Shared directory + serialized implementation/review → reviewer reads the
+current files directly.
+
+Isolated worktree/copy → the parent supplies a worktree, commit, branch,
+handoff, or diff that contains the implementation.
+
+Concurrent writers in one shared directory remain prohibited when paths
+overlap. Review is read-only by default; if the supplied source is missing,
+stale, or inaccessible, the reviewer reports `BLOCKED` rather than reviewing
+the untouched baseline.
 
 ## Git/worktree isolation fallback
 

@@ -15,6 +15,346 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
+def normalize(text: str) -> str:
+    return " ".join(text.casefold().replace("’", "'").split())
+
+
+def markdown_section(text: str, heading: str) -> str:
+    """Extract one authoritative Markdown section, ignoring fenced headings."""
+    wanted = normalize(heading)
+    active = False
+    active_level = 0
+    fenced = False
+    body: list[str] = []
+
+    for line in text.splitlines():
+        fence = bool(re.match(r"^\s*```", line))
+        match = None if fenced else re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if match:
+            level = len(match.group(1))
+            title = normalize(match.group(2))
+            if active and level <= active_level:
+                return "\n".join(body)
+            if not active and title == wanted:
+                active = True
+                active_level = level
+                continue
+        if active:
+            body.append(line)
+        if fence:
+            fenced = not fenced
+    return "\n".join(body) if active else ""
+
+
+def fenced_schema(section: str) -> str:
+    """Return the first YAML schema fenced inside an authoritative section."""
+    for match in re.finditer(
+        r"(?ms)^```(?P<language>yaml|yml)\s*\r?\n(?P<body>.*?)^```[ \t]*$",
+        section,
+    ):
+        return match.group("body")
+    return ""
+
+
+def schema_fields(schema: str) -> set[str]:
+    return set(re.findall(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_-]*):", schema))
+
+
+LEDGER_CONTRADICTION_PATTERNS = (
+    r"\b(?:arrival|completion) order\b.{0,80}\b(?:determines|controls|assigns)\b.{0,40}\bownership\b",
+    r"\bownership\b.{0,80}\b(?:assigned|determined|controlled)\b.{0,80}\b(?:whichever|first)\b",
+    r"\b(?:both|two)\b.{0,60}\b(?:terminal|completion)\b.{0,60}\b(?:results?|states?)\b.{0,40}\b(?:retain|kept|recorded)\b",
+)
+
+PROJECT_CONTRADICTION_PATTERNS = (
+    r"\b(?:every|all)\s+(?:child|children|task|tasks)\b.{0,80}\b(?:projectless|without a project)\b",
+    r"\b(?:verification|verify(?:ing)? the child)\b.{0,40}\b(?:optional|not required|unnecessary)\b",
+    r"\b(?:silently|quietly)\b.{0,80}\b(?:fallback|fall\s+back)\b",
+)
+
+NOTIFICATION_CONTRADICTION_PATTERNS = (
+    r"\broutine polling\b.{0,40}\b(?:required|mandatory|must)\b",
+    r"\b(?:message|report)\b.{0,100}\b(?:and|with)\b.{0,100}\bcompletion event\b.{0,100}\b(?:separate|two|individually)\b.{0,40}\bresults?\b",
+    r"\bcompletion event\b.{0,100}\b(?:alone|by itself|on its own)\b.{0,60}\b(?:sufficient|enough)\b.{0,80}\bbounded collection\b.{0,40}\b(?:optional|unnecessary|not required)\b",
+    r"\b(?:one|a single) bounded collection\b.{0,100}\bwithout\b.{0,60}\bcompletion(?:-event)? wake-up\b",
+)
+
+REVIEW_CONTRADICTION_PATTERNS = (
+    r"\bimplementer's reasoning\b.{0,40}\b(?:is|remains)\s+(?:required|mandatory|necessary)\b",
+    r"\b(?:source|review source)\b.{0,100}\b(?:missing|absent|stale|outdated)\b.{0,100}\b(?:review|assess|inspect)\b.{0,80}\bbaseline\b",
+)
+
+ROUTING_IDENTITY_CONTRADICTION_PATTERNS = (
+    r"\b(?:(?:must|may|should)\s+(?!not\b|never\b)|always\s+|says to\s+)copy\b.{0,80}\b(?:incoming\s+)?source_thread_id\b.{0,80}\bcoordinator_task_id\b",
+    r"(?<!not )(?<!never )\b(?:use|substitute|treat)\b.{0,80}\b(?:root|parent)\s+(?:task\s+)?id\b.{0,80}\bcoordinator_task_id\b",
+    r"\bsource_thread_id\b.{0,80}\b(?:is|means|identifies)\b(?!(?:\s+\w+){0,4}\s+(?:not|never)\b).{0,40}\bcurrent task(?:'s)? (?:own )?id\b",
+    r"\bexplicit direct coordinator id\b.{0,30}\b(?:is\s+(?!not\b|never\b)(?:allowed|permitted)|(?:may|can|should)\s+(?!not\b|never\b)(?:be\s+)?used)\b.{0,100}\b(?:unconfirmed|not confirmed|without\b.{0,30}\bconfirm|manually transcribed|not passed verbatim)",
+    r"\bimplicit routing\b.{0,80}\bunavailable\b.{0,80}\bcoordinator id\b.{0,50}\bunconfirmed\b.{0,80}(?<!not )(?<!never )\b(?:skip|omit|avoid|bypass)\b.{0,80}\b(?:completion-event wake-up|completion event|bounded collection)\b",
+    r"\broot-only channel\b.{0,50}(?<!not )(?<!never )\b(?:replaces?|supersedes?)\b.{0,80}\bdirect delivery\b.{0,40}\bimmediate coordinator\b",
+    r"\broot-only channel\b.{0,80}\bcan stand in for\b.{0,80}\bdirect delivery\b.{0,40}\bimmediate coordinator\b",
+)
+
+PERMISSION_CONTRADICTION_PATTERNS = (
+    r"\bfull(?:/| or )unrestricted access\b.{0,80}\b(?:still|always|must|should)\b(?!\s+(?:not|never)\b).{0,40}\b(?:request|ask(?:ing)? for)\b.{0,40}\b(?:elevation|approval)\b",
+    r"\bfull(?:/| or )unrestricted access\b(?![^.]{0,80}\b(?:not|never)\b)[^.]{0,80}\b(?:requires?|needs?)\b.{0,40}\b(?:elevation|approval)\b",
+    r"\bcommand(?: or process)? failure\b.{0,80}(?<!not )(?<!never )\b(?:proves|is evidence of|means)\b.{0,60}\bmissing permission\b",
+    r"\b(?:must|should|always)\b(?!\s+(?:not|never)\b).{0,40}\b(?:reconfirm|confirm again|repeat confirmation)\b.{0,80}\b(?:granted|existing) authority\b",
+)
+
+
+def has_forbidden(normalized_text: str, patterns: tuple[str, ...]) -> bool:
+    """Reject only the small, explicit contradiction patterns listed by a contract."""
+    return any(re.search(pattern, normalized_text, flags=re.IGNORECASE) is not None for pattern in patterns)
+
+
+def section_contains(
+    text: str,
+    heading: str,
+    phrases: tuple[str, ...],
+    forbidden: tuple[str, ...] = (),
+) -> bool:
+    section = markdown_section(text, heading)
+    normalized = normalize(section)
+    return bool(section) and all(normalize(phrase) in normalized for phrase in phrases) and not has_forbidden(
+        normalized, forbidden
+    )
+
+
+def contract_matches(
+    text: str,
+    heading: str,
+    fields: tuple[str, ...] = (),
+    schema_fragments: tuple[str, ...] = (),
+    phrases: tuple[str, ...] = (),
+    forbidden: tuple[str, ...] = (),
+) -> bool:
+    section = markdown_section(text, heading)
+    schema = fenced_schema(section)
+    normalized_section = normalize(section)
+    normalized_schema = normalize(schema)
+    return (
+        bool(section)
+        and (not fields and not schema_fragments or bool(schema))
+        and set(fields).issubset(schema_fields(schema))
+        and all(normalize(fragment) in normalized_schema for fragment in schema_fragments)
+        and all(normalize(phrase) in normalized_section for phrase in phrases)
+        and not has_forbidden(normalized_section, forbidden)
+    )
+
+
+KEYWORD_DECOY = """
+# Keyword-only decoy
+
+## Unrelated notes
+
+The task ledger mentions task_id, thread_id, depends_on, report_received,
+review_source, and deduplicate. Same project, projectless, no-file, explicit
+user request, and verify the child are all terms in this note. A worker actively
+sends a report, an event-driven wait sees whichever arrives first, and the text
+says does not routinely poll. A reviewer can mention shared_workspace,
+worktree, commit, branch, diff, the actual artifact, and the implementer's
+reasoning without making any of those relationships authoritative.
+
+## Contradictory notes
+
+Arrival order determines ownership. Every child is projectless, the child is
+never verified, routine polling is required, and the reviewer relies on the
+implementer's reasoning instead of the original acceptance criteria.
+
+```yaml
+task_id: DECOY
+thread_id: DECOY-THREAD
+depends_on: none
+report_received: false
+review_source: fake
+```
+"""
+
+
+CONTRADICTORY_LEDGER_DECOY = """
+## Dispatch and collect
+
+This broken example says arrival order does not determine ownership, matches
+every message and completion event by task_id and thread_id, and can deduplicate
+a matching completion event. It then contradicts itself by saying arrival order
+determines ownership and terminal duplicates must be retained.
+
+```yaml
+task_id: DECOY
+thread_id: DECOY-THREAD
+depends_on: none
+report_received: false
+review_source: pending
+```
+"""
+
+
+PARAPHRASED_LEDGER_DECOY = """
+## Dispatch and collect
+
+The task ledger matches every message and completion event by task_id and
+thread_id, can deduplicate a matching completion event, and says arrival order
+does not determine ownership. In the counter-rule, ownership is assigned to
+whichever completion arrives first.
+
+```yaml
+task_id: DECOY
+thread_id: DECOY-THREAD
+depends_on: none
+report_received: false
+review_source: pending
+```
+"""
+
+
+ADVERSARIAL_PROJECT_DECOY = """
+## Project context contract
+
+The same project rule says children inherit the current registered project,
+verifies the child-creation result before considering dispatch complete, and
+projectless execution is valid only for genuinely no-file work or an explicit
+user request. The coordinator stops dispatch rather than silently degrading.
+The opposing rule says every child runs without a project, verification is
+optional, and a failed selection may quietly fall back to projectless execution.
+
+```yaml
+project_context:
+  kind: project
+  project_id: CURRENT_PROJECT
+  environment: worktree
+```
+"""
+
+
+ADVERSARIAL_NOTIFICATION_DECOY = """
+## Combined notification protocol
+
+The worker actively sends the terminal report and a completion event; whichever
+arrives first wakes the parent, which records one terminal result, deduplicates
+the other, and does not permit routine polling. The opposing rule says routine
+polling is required, and the report and completion event are recorded as two
+separate terminal results.
+"""
+
+
+ADVERSARIAL_NOTIFICATION_PARTIAL_REVERSALS = (
+    """
+## Combined notification protocol
+
+The worker actively sends the terminal report and a completion event; whichever
+arrives first wakes the parent, which records one terminal result, deduplicates
+the other, and does not permit routine polling. The opposing rule says the
+completion event alone is sufficient, so bounded collection is optional.
+""",
+    """
+## Combined notification protocol
+
+The worker actively sends the terminal report and a completion event; whichever
+arrives first wakes the parent, which records one terminal result, deduplicates
+the other, and does not permit routine polling. The opposing rule says one
+bounded collection is performed without a completion-event wake-up.
+""",
+)
+
+
+ADVERSARIAL_REVIEW_DECOY = """
+## Review task contract
+
+The reviewer receives the original acceptance criteria and the actual artifact
+through review_source, and does not need the implementer's reasoning. The
+opposing rule says the implementer's reasoning is required; when the source is
+absent or stale, the reviewer may still assess the baseline.
+
+```yaml
+acceptance_criteria: ORIGINAL_CRITERIA
+review_source:
+  kind: shared_workspace
+  locator: current_project_root
+```
+"""
+
+
+ADVERSARIAL_ROUTING_IDENTITY_DECOY = """
+## Nested coordinator routing
+
+Machine-provided source_thread_id in the current delegation envelope identifies
+the parent task that created the current task, not the current task's own ID.
+Do not copy an incoming source_thread_id or root ID into a child brief as
+coordinator_task_id. Prefer the host-created implicit reply-to-source route.
+Use an explicit direct ID only when the current coordinator's exact ID was
+confirmed by a machine result or independent query and passed verbatim. A
+worker whose send tool requires an ID uses the exact source_thread_id from its
+own envelope, not a manually transcribed or guessed ID from the brief. The
+opposing rule says to copy the incoming source_thread_id into
+coordinator_task_id whenever the current coordinator's own ID is unknown. It
+also says an explicit direct coordinator ID is allowed even when the current
+coordinator's exact ID is unconfirmed. When implicit routing is unavailable and
+the coordinator ID is unconfirmed, it says to skip the completion-event wake-up
+and bounded collection. Finally, it says a root-only channel replaces direct
+delivery to the immediate coordinator. It also permits a machine-confirmed ID
+that was manually transcribed instead of passed verbatim.
+"""
+
+
+ADVERSARIAL_PERMISSION_DECOY = """
+## Granted authority and command failures
+
+Before attempting elevation, inspect the granted authority or permission
+profile. Under full/unrestricted access, do not request elevation or approval.
+Command or process failure alone is not evidence of missing permission; first
+diagnose cwd, path, quoting, shell, and process startup. Request user authority
+only when a new authority is actually missing and required by the task, and do
+not reconfirm authority already granted. The opposing rule says full/unrestricted
+access still requires asking for approval, because command failure proves
+missing permission.
+"""
+
+
+ROUTING_RELATIONSHIP_REVERSALS = (
+    "An explicit direct coordinator ID is allowed even when the current coordinator's exact ID is unconfirmed.",
+    "An explicit direct coordinator ID is allowed when machine-confirmed but manually transcribed instead of passed verbatim.",
+    "When implicit routing is unavailable and the coordinator ID is unconfirmed, skip the completion-event wake-up and bounded collection.",
+    "A root-only channel replaces direct delivery to the immediate coordinator.",
+    "A root-only channel can stand in for direct delivery to the immediate coordinator.",
+)
+
+
+CORRECT_NEGATED_RULES = (
+    (
+        "source_thread_id is definitively not the current task's own ID",
+        ROUTING_IDENTITY_CONTRADICTION_PATTERNS,
+    ),
+    (
+        "A worker must not use a root task ID as coordinator_task_id.",
+        ROUTING_IDENTITY_CONTRADICTION_PATTERNS,
+    ),
+    (
+        "An explicit direct coordinator ID is not allowed when the current coordinator's exact ID is unconfirmed.",
+        ROUTING_IDENTITY_CONTRADICTION_PATTERNS,
+    ),
+    (
+        "When implicit routing is unavailable and the coordinator ID is unconfirmed, do not skip the completion event and bounded collection.",
+        ROUTING_IDENTITY_CONTRADICTION_PATTERNS,
+    ),
+    (
+        "A root-only channel must not replace direct delivery to the immediate coordinator.",
+        ROUTING_IDENTITY_CONTRADICTION_PATTERNS,
+    ),
+    (
+        "Full/unrestricted access should never require approval.",
+        PERMISSION_CONTRADICTION_PATTERNS,
+    ),
+    (
+        "Full/unrestricted access is not something that requires approval.",
+        PERMISSION_CONTRADICTION_PATTERNS,
+    ),
+    (
+        "A worker must not reconfirm already granted authority.",
+        PERMISSION_CONTRADICTION_PATTERNS,
+    ),
+)
+
+
 class SkillContractTests(unittest.TestCase):
     def test_required_files_exist(self) -> None:
         required = [
@@ -41,6 +381,27 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("max", text)
         self.assertIn("override", text)
         self.assertNotIn("must always use gpt-5.6-luna", text)
+
+    def test_downstream_concurrency_has_a_user_adjustable_hard_ceiling(self) -> None:
+        phrases = (
+            "at most six downstream windows",
+            "seven total including the parent",
+            "user may adjust the limit",
+            "hard ceiling",
+            "start another batch only after",
+            "must never be exceeded",
+        )
+        self.assertTrue(
+            section_contains(
+                read(SKILL_MD),
+                "Dispatch and collect",
+                phrases=phrases,
+                forbidden=(
+                    "may exceed the active limit",
+                    "start another batch before the current batch ends",
+                ),
+            )
+        )
 
     def test_parent_worker_and_reviewer_boundaries_are_present(self) -> None:
         text = read(SKILL_MD)
@@ -101,6 +462,386 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn(level, text)
         self.assertIn("accepted alone does not prove observed", text)
 
+    def test_parallel_work_is_correlated_and_deduplicated_by_task_id(self) -> None:
+        self.assertTrue(
+            contract_matches(
+                read(SKILL_MD),
+                "Dispatch and collect",
+                fields=("task_id", "thread_id", "depends_on", "report_received", "review_source"),
+                phrases=(
+                    "task ledger",
+                    "arrival order does not determine ownership",
+                    "matches every message and completion event by task_id and thread_id",
+                    "deduplicate a matching completion event",
+                ),
+                forbidden=("arrival order determines ownership",),
+            )
+        )
+
+    def test_children_default_to_the_same_codex_project(self) -> None:
+        self.assertTrue(
+            contract_matches(
+                read(SKILL / "references" / "task-contracts.md"),
+                "Project context contract",
+                fields=("project_context", "kind", "project_id", "environment"),
+                schema_fragments=(
+                    "kind: project",
+                    "project_id: CURRENT_PROJECT",
+                    "environment: worktree",
+                ),
+                phrases=(
+                    "same project",
+                    "children inherit the current registered project",
+                    "verifies the child-creation result",
+                    "before considering dispatch complete",
+                    "projectless execution is valid only for genuinely no-file work or an explicit user request",
+                    "stops dispatch rather than silently degrading",
+                ),
+                forbidden=("silently falling back to projectless",),
+            )
+        )
+
+    def test_active_report_and_event_wait_are_complementary(self) -> None:
+        self.assertTrue(
+            section_contains(
+                read(SKILL / "references" / "capability-fallbacks.md"),
+                "Combined notification protocol",
+                phrases=(
+                    "actively sends the terminal report",
+                    "completion event",
+                    "whichever arrives first wakes the parent",
+                    "records one terminal result",
+                    "deduplicates the other",
+                    "does not permit routine polling",
+                ),
+                forbidden=("routine polling is required",),
+            )
+        )
+
+    def test_reviewer_receives_the_real_artifact_without_implementer_reasoning(self) -> None:
+        self.assertTrue(
+            contract_matches(
+                read(SKILL / "references" / "task-contracts.md"),
+                "Review task contract",
+                fields=("acceptance_criteria", "review_source"),
+                schema_fragments=(
+                    "kind: shared_workspace",
+                    "locator: current_project_root",
+                ),
+                phrases=(
+                    "original acceptance criteria",
+                    "actual artifact",
+                    "does not need the implementer's reasoning",
+                ),
+                forbidden=("implementer's reasoning is required",),
+            )
+        )
+        self.assertTrue(
+            section_contains(
+                read(SKILL / "references" / "capability-fallbacks.md"),
+                "Review source branches",
+                phrases=(
+                    "shared directory + serialized implementation/review",
+                    "reviewer reads the current files directly",
+                    "isolated worktree/copy",
+                    "worktree, commit, branch, handoff, or diff",
+                    "contains the implementation",
+                ),
+            )
+        )
+
+    def test_structure_aware_helpers_reject_keyword_decoys(self) -> None:
+        required_keywords = (
+            "task ledger",
+            "task_id",
+            "thread_id",
+            "depends_on",
+            "report_received",
+            "review_source",
+            "deduplicate",
+            "same project",
+            "projectless",
+            "no-file",
+            "explicit user request",
+            "verify the child",
+            "actively sends",
+            "event-driven wait",
+            "does not routinely poll",
+            "whichever arrives first",
+            "shared_workspace",
+            "worktree",
+            "commit",
+            "branch",
+            "diff",
+            "actual artifact",
+            "implementer's reasoning",
+        )
+        self.assertEqual([], [term for term in required_keywords if normalize(term) not in normalize(KEYWORD_DECOY)])
+        self.assertFalse(
+            contract_matches(
+                KEYWORD_DECOY,
+                "Dispatch and collect",
+                fields=("task_id", "thread_id", "depends_on", "report_received", "review_source"),
+                phrases=("arrival order does not determine ownership", "deduplicate"),
+            )
+        )
+        self.assertFalse(
+            contract_matches(
+                KEYWORD_DECOY,
+                "Project context contract",
+                fields=("project_context", "kind", "project_id", "environment"),
+            )
+        )
+        self.assertFalse(
+            section_contains(
+                KEYWORD_DECOY,
+                "Combined notification protocol",
+                phrases=("actively sends", "whichever arrives first"),
+            )
+        )
+        self.assertFalse(
+            contract_matches(
+                KEYWORD_DECOY,
+                "Review task contract",
+                fields=("acceptance_criteria", "review_source"),
+            )
+        )
+        self.assertFalse(
+            contract_matches(
+                CONTRADICTORY_LEDGER_DECOY,
+                "Dispatch and collect",
+                fields=("task_id", "thread_id", "depends_on", "report_received", "review_source"),
+                phrases=(
+                    "arrival order does not determine ownership",
+                    "matches every message and completion event by task_id and thread_id",
+                    "deduplicate a matching completion event",
+                ),
+                forbidden=LEDGER_CONTRADICTION_PATTERNS,
+            )
+        )
+
+    def test_contract_helper_rejects_project_fallback_paraphrase(self) -> None:
+        self.assertFalse(
+            contract_matches(
+                ADVERSARIAL_PROJECT_DECOY,
+                "Project context contract",
+                fields=("project_context", "kind", "project_id", "environment"),
+                schema_fragments=(
+                    "kind: project",
+                    "project_id: CURRENT_PROJECT",
+                    "environment: worktree",
+                ),
+                phrases=(
+                    "same project",
+                    "children inherit the current registered project",
+                    "verifies the child-creation result",
+                    "before considering dispatch complete",
+                    "projectless execution is valid only for genuinely no-file work or an explicit user request",
+                    "stops dispatch rather than silently degrading",
+                ),
+                forbidden=PROJECT_CONTRADICTION_PATTERNS,
+            )
+        )
+
+    def test_section_helper_rejects_notification_contradiction_paraphrase(self) -> None:
+        self.assertFalse(
+            section_contains(
+                ADVERSARIAL_NOTIFICATION_DECOY,
+                "Combined notification protocol",
+                phrases=(
+                    "actively sends the terminal report",
+                    "completion event",
+                    "whichever arrives first wakes the parent",
+                    "records one terminal result",
+                    "deduplicates the other",
+                    "does not permit routine polling",
+                ),
+                forbidden=NOTIFICATION_CONTRADICTION_PATTERNS,
+            )
+        )
+
+    def test_section_helper_rejects_notification_partial_reversals(self) -> None:
+        phrases = (
+            "actively sends the terminal report",
+            "completion event",
+            "whichever arrives first wakes the parent",
+            "records one terminal result",
+            "deduplicates the other",
+            "does not permit routine polling",
+        )
+        for fixture in ADVERSARIAL_NOTIFICATION_PARTIAL_REVERSALS:
+            with self.subTest(fixture=fixture):
+                self.assertFalse(
+                    section_contains(
+                        fixture,
+                        "Combined notification protocol",
+                        phrases=phrases,
+                        forbidden=NOTIFICATION_CONTRADICTION_PATTERNS,
+                    )
+                )
+
+    def test_contract_helper_rejects_review_baseline_paraphrase(self) -> None:
+        self.assertFalse(
+            contract_matches(
+                ADVERSARIAL_REVIEW_DECOY,
+                "Review task contract",
+                fields=("acceptance_criteria", "review_source"),
+                schema_fragments=(
+                    "kind: shared_workspace",
+                    "locator: current_project_root",
+                ),
+                phrases=(
+                    "original acceptance criteria",
+                    "actual artifact",
+                    "does not need the implementer's reasoning",
+                ),
+                forbidden=REVIEW_CONTRADICTION_PATTERNS,
+            )
+        )
+
+    def test_contract_helper_rejects_ledger_ownership_paraphrase(self) -> None:
+        self.assertFalse(
+            contract_matches(
+                PARAPHRASED_LEDGER_DECOY,
+                "Dispatch and collect",
+                fields=("task_id", "thread_id", "depends_on", "report_received", "review_source"),
+                phrases=(
+                    "arrival order does not determine ownership",
+                    "matches every message and completion event by task_id and thread_id",
+                    "deduplicate a matching completion event",
+                ),
+                forbidden=LEDGER_CONTRADICTION_PATTERNS,
+            )
+        )
+
+    def test_nested_coordinator_identity_uses_machine_reply_routes(self) -> None:
+        phrases = (
+            "source_thread_id in the current delegation envelope identifies the parent task that created the current task",
+            "not the current task's own ID",
+            "do not copy an incoming source_thread_id or root ID into a child brief as coordinator_task_id",
+            "host-created implicit reply-to-source",
+            "current coordinator's exact ID was confirmed by a machine result or independent query and passed verbatim",
+            "uses the exact source_thread_id from its own envelope",
+            "not a manually transcribed or guessed ID from the brief",
+            "completion event and one bounded collection",
+            "degraded routing",
+            "blocked",
+        )
+        text = read(SKILL / "references" / "task-contracts.md")
+        self.assertTrue(
+            section_contains(
+                text,
+                "Nested coordinator routing",
+                phrases=phrases,
+                forbidden=ROUTING_IDENTITY_CONTRADICTION_PATTERNS,
+            )
+        )
+        self.assertFalse(
+            section_contains(
+                ADVERSARIAL_ROUTING_IDENTITY_DECOY,
+                "Nested coordinator routing",
+                phrases=phrases[:-3],
+                forbidden=ROUTING_IDENTITY_CONTRADICTION_PATTERNS,
+            )
+        )
+
+    def test_granted_authority_prevents_redundant_permission_prompts(self) -> None:
+        phrases = (
+            "before attempting elevation, inspect the granted authority or permission profile",
+            "under full/unrestricted access, do not request elevation or approval",
+            "command or process failure alone is not evidence of missing permission",
+            "diagnose cwd, path, quoting, shell, and process startup",
+            "only when a new authority is actually missing and required by the task",
+            "do not reconfirm authority already granted",
+        )
+        text = read(SKILL / "references" / "capability-fallbacks.md")
+        self.assertTrue(
+            section_contains(
+                text,
+                "Granted authority and command failures",
+                phrases=phrases,
+                forbidden=PERMISSION_CONTRADICTION_PATTERNS,
+            )
+        )
+        self.assertFalse(
+            section_contains(
+                ADVERSARIAL_PERMISSION_DECOY,
+                "Granted authority and command failures",
+                phrases=phrases,
+                forbidden=PERMISSION_CONTRADICTION_PATTERNS,
+            )
+        )
+
+    def test_routing_patterns_reject_each_relationship_reversal(self) -> None:
+        for reversal in ROUTING_RELATIONSHIP_REVERSALS:
+            with self.subTest(reversal=reversal):
+                self.assertTrue(
+                    has_forbidden(normalize(reversal), ROUTING_IDENTITY_CONTRADICTION_PATTERNS)
+                )
+
+    def test_authoritative_sections_reject_appended_relationship_reversals(self) -> None:
+        routing_heading = "Nested coordinator routing"
+        routing_section = markdown_section(
+            read(SKILL / "references" / "task-contracts.md"), routing_heading
+        )
+        routing_phrases = (
+            "source_thread_id in the current delegation envelope identifies the parent task that created the current task",
+            "not the current task's own ID",
+            "do not copy an incoming source_thread_id or root ID into a child brief as coordinator_task_id",
+            "host-created implicit reply-to-source",
+        )
+        notification_heading = "Combined notification protocol"
+        notification_section = markdown_section(
+            read(SKILL / "references" / "capability-fallbacks.md"), notification_heading
+        )
+        notification_phrases = (
+            "actively sends the terminal report",
+            "completion event",
+            "whichever arrives first wakes the parent",
+            "records one terminal result",
+            "deduplicates the other",
+            "does not permit routine polling",
+        )
+        cases = (
+            *(
+                (
+                    routing_heading,
+                    routing_section,
+                    reversal,
+                    routing_phrases,
+                    ROUTING_IDENTITY_CONTRADICTION_PATTERNS,
+                )
+                for reversal in ROUTING_RELATIONSHIP_REVERSALS
+            ),
+            *(
+                (
+                    notification_heading,
+                    notification_section,
+                    markdown_section(fixture, notification_heading).split("The opposing rule says", 1)[-1],
+                    notification_phrases,
+                    NOTIFICATION_CONTRADICTION_PATTERNS,
+                )
+                for fixture in ADVERSARIAL_NOTIFICATION_PARTIAL_REVERSALS
+            ),
+        )
+        for heading, section, reversal, phrases, patterns in cases:
+            with self.subTest(heading=heading, reversal=reversal):
+                fixture = f"## {heading}\n\n{section}\n\n{reversal}"
+                self.assertFalse(section_contains(fixture, heading, phrases, patterns))
+
+    def test_routing_and_permission_patterns_accept_correct_negations(self) -> None:
+        for rule, patterns in CORRECT_NEGATED_RULES:
+            with self.subTest(rule=rule):
+                self.assertFalse(has_forbidden(normalize(rule), patterns))
+
+    def test_permission_patterns_reject_direct_full_access_reversal(self) -> None:
+        contradiction = "Full/unrestricted access requires approval."
+        self.assertTrue(has_forbidden(normalize(contradiction), PERMISSION_CONTRADICTION_PATTERNS))
+
+    def test_main_skill_stays_at_or_below_1500_words(self) -> None:
+        words = read(SKILL_MD).split()
+        self.assertLessEqual(len(words), 1500)
+
     def test_environment_mapping_prefers_projectless_or_worktree_and_has_fallbacks(self) -> None:
         text = (read(SKILL_MD) + read(SKILL / "references" / "capability-fallbacks.md")).lower()
         for phrase in (
@@ -140,6 +881,23 @@ class SkillContractTests(unittest.TestCase):
             "runtime claim evidence level",
         ):
             self.assertIn(phrase, text)
+
+
+    def test_review_source_kind_vocabulary_is_explicit_and_distinguishes_environment(self) -> None:
+        contracts = read(SKILL / "references" / "task-contracts.md").lower()
+        for kind in (
+            "shared_workspace",
+            "worktree",
+            "copy",
+            "commit",
+            "branch",
+            "handoff",
+            "diff",
+            "none",
+        ):
+            with self.subTest(kind=kind):
+                self.assertIn(f"`{kind}`", contracts)
+        self.assertIn("environment is not a review source", contracts)
 
 
 if __name__ == "__main__":

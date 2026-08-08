@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from tempfile import TemporaryDirectory
 import unittest
 from pathlib import Path
 
@@ -9,33 +10,53 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 VALIDATOR = ROOT / "scripts" / "validate_package.py"
-PUBLIC_FILES = [
-    path
-    for path in ROOT.rglob("*")
-    if path.is_file() and ".git" not in path.parts and "__pycache__" not in path.parts
-]
+PRIVATE_DIRS = {
+    ".git",
+    ".planning",
+    ".engramory-memory",
+    ".work",
+    ".tmp",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+}
 TEXT_SUFFIXES = {".md", ".yaml", ".yml", ".py", ".txt"}
+
+
+def is_public_file(path: Path, root: Path) -> bool:
+    return path.is_file() and not any(
+        part in PRIVATE_DIRS for part in path.relative_to(root).parts
+    )
+
+
+def public_files(root: Path = ROOT) -> list[Path]:
+    """Return all public source files without local coordination state."""
+    candidates = root.rglob("*")
+    return sorted(
+        [path for path in candidates if is_public_file(path, root)],
+        key=lambda path: path.as_posix(),
+    )
 
 
 def public_text() -> str:
     return "\n".join(
         path.read_text(encoding="utf-8")
-        for path in PUBLIC_FILES
+        for path in public_files()
         if path.suffix.lower() in TEXT_SUFFIXES
     )
 
 
-def tracked_files() -> list[Path]:
-    if not (ROOT / ".git").exists():
+def tracked_files(root: Path = ROOT) -> list[Path]:
+    if not (root / ".git").exists():
         return []
     result = subprocess.run(
-        ["git", "-C", str(ROOT), "ls-files", "-z"],
+        ["git", "-C", str(root), "ls-files", "-z"],
         check=False,
         capture_output=True,
     )
     if result.returncode != 0:
         return []
-    return [ROOT / item for item in result.stdout.decode("utf-8").split("\0") if item]
+    return [root / item for item in result.stdout.decode("utf-8").split("\0") if item]
 
 
 class PackageHygieneTests(unittest.TestCase):
@@ -104,7 +125,7 @@ class PackageHygieneTests(unittest.TestCase):
 
         public_cache_artifacts = [
             path
-            for path in PUBLIC_FILES
+            for path in public_files()
             if any(part in cache_directories for part in path.parts)
             or path.suffix.lower() in cache_suffixes
         ]
@@ -116,6 +137,126 @@ class PackageHygieneTests(unittest.TestCase):
         ]
         self.assertEqual([], [str(path.relative_to(ROOT)) for path in public_cache_artifacts])
         self.assertEqual([], [str(path.relative_to(ROOT)) for path in tracked_cache_artifacts])
+
+    def test_private_coordination_state_is_not_public_package_input(self) -> None:
+        private = {".planning", ".engramory-memory", ".work"}
+        leaked = [
+            str(path.relative_to(ROOT))
+            for path in public_files()
+            if private.intersection(path.relative_to(ROOT).parts)
+        ]
+        self.assertEqual([], leaked)
+
+    def test_public_files_source_archive_excludes_private_coordination_dirs(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "README.md").write_text("public", encoding="utf-8")
+            for directory in (".planning", ".engramory-memory", ".work"):
+                private = root / directory / "private.md"
+                private.parent.mkdir(parents=True)
+                private.write_text("private", encoding="utf-8")
+
+            found = {path.relative_to(root) for path in public_files(root)}
+
+        self.assertEqual({Path("README.md")}, found)
+
+    def test_public_files_filters_tracked_private_paths_like_archive_paths(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "README.md").write_text("public", encoding="utf-8")
+            private_paths = [
+                root / directory / "private.md"
+                for directory in (".planning", ".engramory-memory", ".work")
+            ]
+            for private in private_paths:
+                private.parent.mkdir(parents=True, exist_ok=True)
+                private.write_text("private", encoding="utf-8")
+
+            subprocess.run(
+                ["git", "-C", str(root), "init", "--quiet"],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "--", "."],
+                check=True,
+                capture_output=True,
+            )
+
+            tracked = {
+                path.relative_to(root)
+                for path in tracked_files(root)
+            }
+            found = {
+                path.relative_to(root)
+                for path in public_files(root)
+            }
+
+        self.assertEqual(
+            {Path("README.md"), Path(".planning/private.md"), Path(".engramory-memory/private.md"), Path(".work/private.md")},
+            tracked,
+        )
+        self.assertEqual({Path("README.md")}, found)
+
+
+    def test_release_documents_and_mit_license_exist(self) -> None:
+        license_path = ROOT / "LICENSE"
+        future_work = ROOT / "FUTURE_WORK.md"
+        self.assertTrue(license_path.is_file(), "LICENSE must exist before release")
+        self.assertIn("MIT License", license_path.read_text(encoding="utf-8"))
+        self.assertTrue(future_work.is_file(), "FUTURE_WORK.md must exist")
+
+    def test_readme_links_examples_in_english_japanese_chinese_order(self) -> None:
+        readme = README.read_text(encoding="utf-8") if README.is_file() else ""
+        expected = [
+            "examples/minimal-orchestration.en.md",
+            "examples/minimal-orchestration.ja.md",
+            "examples/minimal-orchestration.zh-CN.md",
+        ]
+        links = re.findall(r"\[[^]]+\]\((examples/minimal-orchestration\.[^)]+)\)", readme)
+        self.assertEqual(expected, links[:3])
+        self.assertIn("FUTURE_WORK.md", readme)
+        for link in expected:
+            self.assertTrue((ROOT / link).is_file(), f"missing example: {link}")
+
+    def test_example_files_cross_link_in_english_japanese_chinese_order(self) -> None:
+        expected = [
+            "minimal-orchestration.en.md",
+            "minimal-orchestration.ja.md",
+            "minimal-orchestration.zh-CN.md",
+        ]
+        for filename in expected:
+            path = ROOT / "examples" / filename
+            text = path.read_text(encoding="utf-8") if path.is_file() else ""
+            links = re.findall(r"\[[^]]+\]\((minimal-orchestration\.[^)]+)\)", text)
+            with self.subTest(filename=filename):
+                self.assertEqual(expected, links[:3])
+
+    def test_public_files_include_untracked_public_files(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "README.md").write_text("public", encoding="utf-8")
+            (root / "CHANGELOG.md").write_text("public", encoding="utf-8")
+            (root / ".planning" / "private.md").parent.mkdir(parents=True)
+            (root / ".planning" / "private.md").write_text("private", encoding="utf-8")
+
+            subprocess.run(
+                ["git", "-C", str(root), "init", "--quiet"],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "add", "--", "README.md"],
+                check=True,
+                capture_output=True,
+            )
+
+            found = {
+                path.relative_to(root)
+                for path in public_files(root)
+            }
+
+        self.assertEqual({Path("README.md"), Path("CHANGELOG.md")}, found)
 
 
 if __name__ == "__main__":
