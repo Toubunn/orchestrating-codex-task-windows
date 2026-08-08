@@ -6,3 +6,5 @@ __pycache__/
 Thumbs.db
 .work/
 .tmp/
+.planning/
+.engramory-memory/
