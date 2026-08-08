@@ -62,7 +62,36 @@ def tracked_files(root: Path = ROOT) -> list[Path]:
 class PackageHygieneTests(unittest.TestCase):
     def test_repository_entrypoints_exist(self) -> None:
         self.assertTrue(README.is_file(), "README.md must exist")
+        self.assertTrue((ROOT / "README.ja.md").is_file(), "README.ja.md must exist")
+        self.assertTrue((ROOT / "README.zh-CN.md").is_file(), "README.zh-CN.md must exist")
         self.assertTrue(VALIDATOR.is_file(), "scripts/validate_package.py must exist")
+
+    def test_readme_language_versions_cross_link_in_english_japanese_chinese_order(self) -> None:
+        expected = ["README.md", "README.ja.md", "README.zh-CN.md"]
+        for filename in expected:
+            path = ROOT / filename
+            text = path.read_text(encoding="utf-8") if path.is_file() else ""
+            links = re.findall(r"\[[^]]+\]\((README(?:\.ja|\.zh-CN)?\.md)\)", text)
+            with self.subTest(filename=filename):
+                self.assertEqual(expected, links[:3])
+
+    def test_readme_language_versions_keep_shared_contract_markers(self) -> None:
+        markers = [
+            "examples/minimal-orchestration.en.md",
+            "examples/minimal-orchestration.ja.md",
+            "examples/minimal-orchestration.zh-CN.md",
+            "FUTURE_WORK.md",
+            "gpt-5.6-luna",
+            "review_source",
+            "report_received",
+            "$orchestrating-codex-task-windows",
+            "python -B scripts/validate_package.py",
+            "MIT License",
+        ]
+        for filename in ("README.md", "README.ja.md", "README.zh-CN.md"):
+            text = (ROOT / filename).read_text(encoding="utf-8")
+            with self.subTest(filename=filename):
+                self.assertEqual([], [marker for marker in markers if marker not in text])
 
     def test_readme_documents_required_public_contract(self) -> None:
         text = README.read_text(encoding="utf-8") if README.is_file() else ""

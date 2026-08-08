@@ -1,5 +1,9 @@
 # Orchestrating Codex Task Windows
 
+- 🇬🇧 [English](README.md)
+- 🇯🇵 [日本語](README.ja.md)
+- 🇨🇳 [简体中文](README.zh-CN.md)
+
 This repository contains the `orchestrating-codex-task-windows` Skill for coordinating bounded work across visible, context-isolated Codex task windows.
 
 ## Scope

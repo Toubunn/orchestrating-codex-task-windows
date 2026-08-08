@@ -3,6 +3,7 @@
 ## 2026-08-08
 
 - Added the MIT license.
+- Added Japanese and Simplified Chinese README translations with cross-links.
 - Added English, Japanese, and Simplified Chinese minimal orchestration examples with cross-links.
 - Added `FUTURE_WORK.md` for optional runtime helpers, a protocol simulator, host integration, and other post-v1 ideas.
 - Clarified the `review_source` vocabulary, including `copy` and `handoff`, while keeping execution environments separate from artifact sources.
