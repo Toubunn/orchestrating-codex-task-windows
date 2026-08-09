@@ -16,6 +16,14 @@ The coordinator chose internal subagents instead of independent Codex task windo
 
 The coordinator produced strong parent, worker, reviewer, event, and reporting boundaries when the desired dimensions were explicitly requested. It still selected a generic cheap-model policy instead of a configurable Luna Max default and introduced more state names and contract fields than necessary.
 
+### Scenario 4: Desktop-required regression
+
+In a sanitized reproduction, a parent asked for a separately visible same-project sidebar task but a terminal worker was launched instead. The v2 acceptance
+signal is deterministic: the parent requires the Codex Desktop host task route,
+verifies the returned task/thread, project, host, title, and sidebar visibility,
+and marks the dispatch `BLOCKED` when that capability is unavailable. No
+terminal, CLI, or internal-only agent route is a successful substitute.
+
 ## Scoring rubric
 
 Score each criterion from 0 to 2:
@@ -54,7 +62,7 @@ evaluations and are labelled separately.
 | Shared-directory artifact review | Fresh refinement GREEN — observed 2026-08-06 | Serialized implementation was followed by a fresh read-only review of the actual artifact. A corrected fresh review accepted exactly three logical lines, valid UTF-8 without a BOM, one conventional terminal LF, and no fourth logical line. |
 | Three-worker out-of-order correlation and deduplication | Fresh refinement GREEN — observed 2026-08-06 | Three workers and three fresh reviewers used the same saved project and local context. Results arrived out of task-number order but stayed attached to their ledger identities. A bounded retest confirmed three consistent 43-test results by semantic key fields while ignoring nondeterministic timing text; every final reviewer mapping was approved. |
 | Isolated review-source handoff | Fresh refinement GREEN — observed 2026-08-06 | The fresh reviewer received the implementation worktree, saw the refined artifact rather than the untouched baseline, remained read-only, verified stable source content, and returned `APPROVED`. |
-| Same-project child creation and projectless-fallback rejection | Fresh refinement GREEN — observed 2026-08-06 | Every implementation and review child used the same saved project and local context, the parent verified project context after creation, and no projectless fallback was used. |
+| Same-project child creation and coordination-target rejection | Fresh refinement GREEN — observed 2026-08-06 | Every implementation and review child used the same saved project and local context, the parent verified project context after creation, and no alternate coordination target was used. |
 
 Evidence limits: the host exposed requested or accepted runtime settings but did
 not independently expose effective runtime for every child. It also did not

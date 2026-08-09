@@ -1,95 +1,121 @@
-# Orchestrating Codex Task Windows
+# Constellary
 
 - 🇬🇧 [English](README.md)
 - 🇯🇵 [日本語](README.ja.md)
 - 🇨🇳 [简体中文](README.zh-CN.md)
 
-本仓库包含 `orchestrating-codex-task-windows` Skill，用于在多个可见、上下文相互隔离的 Codex 任务窗口之间，协调边界清晰的工作。
+Constellary 是一个 Codex Skill，用于在多个独立、可见的 Codex Desktop 任务之间
+协调边界清晰的工作。多个独立任务像星星一样各自运行，由上级任务把它们组织成一个有意义的星群。
+
+当前候选版本是 `v2.0.0-alpha`，稳定目标是 `v2.0.0`。公开 Skill slug 是
+`constellary`，调用方式是 `$constellary`。
+
+## v2.0.0-alpha 本次更新内容
+
+- **破坏性更名：** 项目和 Skill 统一更名为 Constellary。请使用 `$constellary`，并安装
+  `skills/constellary/`；旧名称和旧调用方式只保留在迁移记录中。
+- **真正的 Desktop 下级任务：** `coordination_surface: codex_desktop` 与
+  `desktop_required` 要求上级在同一个已注册 Codex 项目里创建侧边栏独立可见的任务。
+  缺少必需宿主能力时必须报告 `BLOCKED`，绝不回退到终端或 CLI。
+- **更安全的文件执行：** `execution_environment: auto_safe` 根据写入风险独立选择
+  Local、Worktree 或串行执行，不会改变 Desktop 协调面。
+- **可预测的身份与上下级关系：** 创建时标题遵循确定性的 34 code-point 协议；
+  creator identity、任务合同、report route 和上级负责集成共同建立逻辑上下级关系。
+- **明确的交付与审查：** worker 主动发送结构化 report，上级通过宿主事件等待；每次
+  独立只读审查都创建全新任务，修复则创建另一个有边界的实现任务。
+- **CLI 分离规划：** [FUTURE_WORK.md](FUTURE_WORK.md) 记录未来明确 opt-in 的
+  CLI Adapter，不把它混入 Desktop 工作流，也不作为自动 fallback。
+- **公开卫生检查：** 对每个公开 regular file 和 path 扫描机器专用路径、identifier、
+  secret-shaped value、private state、旧名称残留、损坏链接、异常标题和缓存产物。
+- **发布证据：** 英文、日文和简体中文 README 与示例保持同一 contract，并通过
+  79 项 automated test 和 package validator 保护候选版本。
 
 ## 范围
 
-这是一个仅面向 Codex 的 v1 版本。独立任务是一个单独的、可见的 Codex 窗口，拥有自己的上下文和生命周期；它不等同于 worker 内部使用的 subagent。worker 可以在内部使用 subagent，但由父任务负责协调独立任务，并拥有架构、集成、用户沟通和最终结论的责任。
+Constellary v2 的唯一可执行协调面是 Codex Desktop。独立任务是拥有独立上下文和
+生命周期的可见任务窗口，不是 worker 内部的 subagent。上级任务负责架构、任务台账、
+项目上下文、集成、汇报和最终结论。
+
+运行策略是确定性的：设置 `coordination_surface: codex_desktop`，使用
+`desktop_required`，解析当前注册的同一 Codex 项目，通过宿主的 `create_thread` 创建
+下级任务，然后核验 `thread_id`、`project_id`、`host_id`、实际标题和侧边栏可见性。
+通过宿主事件等待，并使用宿主 thread 发送 report。任何必需 Desktop 能力缺失时，
+dispatch 必须是 `BLOCKED`。
+
+v2 不提供 CLI fallback。terminal、`codex`、`codex exec`、`codex.exe`、PowerShell、
+`pwsh`、`cmd`、Windows Terminal、`Start-Process`、subprocess、background shell、
+临时 prompt 文件或 internal-only agent，都不是成功的 Desktop 路径。
 
 ## 安装
 
-将单独的目录 `skills/orchestrating-codex-task-windows/` 复制到 Codex 的 Skills 目录中。仓库级别的测试和验证脚本面向维护者；Skill 本身可以独立安装。
+将单独的目录 `skills/constellary/` 复制到 Codex Skills 目录。仓库级测试和验证脚本
+面向维护者；Skill 本身可以独立安装。
 
 ## 示例
 
-请选择你熟悉的语言，从同一个最小编排示例开始：
+请选择熟悉的语言，从同一个最小编排示例开始：
 
 - 🇬🇧 [English 最小编排示例](examples/minimal-orchestration.en.md)
-- 🇯🇵 [日语最小编排示例](examples/minimal-orchestration.ja.md)
+- 🇯🇵 [日本語の最小オーケストレーション例](examples/minimal-orchestration.ja.md)
 - 🇨🇳 [简体中文最小编排示例](examples/minimal-orchestration.zh-CN.md)
 
-三个示例互相链接。未来扩展记录在
+三个示例相互链接。未来扩展记录在
 [FUTURE_WORK.md](FUTURE_WORK.md) 中。
+
+## 标题协议
+
+每个下级任务都使用以下格式：
+
+`Constellary · <TaskID> · <Role> · <ShortGoal>`
+
+宿主标题预算为 NFC 归一化后的 34 个 Unicode code point。创建前先执行 NFC Unicode normalization、
+折叠多余空白，并对 short goal 做确定性压缩，保持项目名、TaskID 和 role 不变。
+创建后核验宿主返回/显示的 actual title，不接受宿主隐式截断。紧凑示例是
+`Constellary · T01 · 实现 · Desktop适配`；审查、修复、复审分别使用 `T01-R1`、
+`T01-F1`、`T01-R2`。
 
 ## 运行时默认值
 
-所有下级角色，包括实现 worker 和独立 reviewer，默认使用 Luna Max，也就是 `gpt-5.6-luna` 和 `max` reasoning。当前用户指令或项目配置可以覆盖任意角色的模型、reasoning 等级，或者同时覆盖两者，不需要重复确认。
+所有下级角色，包括实现 worker 和独立 reviewer，默认使用 Luna Max，即
+`gpt-5.6-luna` 与 `max` reasoning。当前用户指令或项目配置可以覆盖 model、reasoning
+等级或两者，不需要重复确认。Skill 不会静默提升 reviewer。
 
-Luna Max 适合边界清晰的常规审查。对于安全、架构、并发、数据完整性或发布关键型审查，用户或项目配置可以选择 Sol，或者其他已经配置的更强 reviewer。如果没有人要求或配置升级，Skill 不会自动提升 reviewer 的模型。宿主暴露实际运行时信息时，父任务应该记录它，并如实报告任何替换或差异。
+实现与审查始终使用两个全新的独立任务。审查默认只读；修复必须作为新的、有边界的
+实现任务。侧边栏可见的 peer 通过 creator identity、source thread、project context、
+task ledger 和 report route 建立逻辑关联。
 
-实现和审查使用两个不同的全新独立任务。审查默认是只读的；如果需要修复，应作为新的、有边界的实现任务派发。
+## 汇报、事件等待与轮询
 
-## 直接使用 Sol，还是使用编排
+每个 worker 都必须在结束前主动向直属 coordinator 发送一次结构化 terminal report。
+只留在 worker 任务窗口中的结果不算已交付。上级等待匹配的 message、completion、
+blocker、failure 或 user event，不常规轮询未变化的任务。使用 `task_id` 与 `thread_id`
+做关联，去重匹配的 completion event，并将 `report_received` 与 review verdict、
+`review_source` 分开。
 
-如果修改很小、耦合紧密，或者需要持续的架构判断，直接使用 Sol 任务。如果有两个或更多边界清晰的职责可以独立完成，例如实现、测试、文档或分别调查，就使用这个 Skill。
+## 执行环境
 
-对于安全、架构、并发、数据完整性或发布关键型工作，一个实用的混合方式是让 Sol 担任父任务或 reviewer，让 Luna Max 担任 worker。下游窗口数量上限为 6 个，但这不是目标；只从任务真正需要的独立 worker 数量开始。
+协调面与文件执行环境是两个独立决策。公开策略是
+`execution_environment: auto_safe`：准备好的 isolated copy 或串行单写者工作使用
+Local，Git 仓库中的并发写入或实质重叠风险使用 Worktree。用户可以 override；如果没有
+安全隔离，就串行执行或报告 `BLOCKED`。
 
-## 报告、事件等待与轮询
+## 未来 CLI Adapter
 
-下面三个概念并不相同：
-
-- **Worker report：** worker 或 reviewer 在完成或受阻时，主动发送给直属 coordinator 的结构化结果。它包含工作结果、变更路径、检查、证据、阻塞点、担忧和不确定性。
-- **Event wait：** 父任务等待相关消息、完成、阻塞、失败或用户事件，直到其中一种活动将其唤醒。父任务可以等待当前活动任务集合，而不需要持续查看它们。
-- **Polling：** 为了确认是否发生变化，反复打开或检查没有变化的子任务。Skill 禁止常规轮询。
-
-报告和事件等待应结合使用：worker 发送报告，父任务等待匹配的活动。先到达的完成事件只负责唤醒父任务，并不代表结构化报告已经接收或验证。只有在父任务验证匹配的结构化报告后，才设置 `report_received`（已收到报告）。如果结构化报告先到，之后到达的匹配完成事件就是第二次传递，应当去重。无论哪一种顺序，每个任务都只记录一个终态结果；另一条匹配传递不能产生第二个结果。
-
-## 项目与子任务
-
-独立子任务默认使用父任务已经注册的 Codex 项目。worktree 是同一个项目内的隔离工作区，并不会让子任务变成 projectless。Projectless 执行只适用于真正不处理文件的工作，或者用户明确要求的情况。
-
-创建子任务后，coordinator 要验证它的项目上下文。如果无法选择或验证目标项目，coordinator 应在 dispatch 前停止，不得默默创建一个 projectless 窗口。
-
-当多个子任务同时运行时，父任务要在 task ledger 中把每个 `task_id` 与 `thread_id` 配对。不能根据消息先后判断归属。报告和完成事件都通过这些标识符进行匹配；活跃报告与相应完成事件同时到达时，仍然只产生一个终态结果，而不是两个。
-
-默认情况下，父任务同时最多运行 6 个下游窗口；如果把父任务也算在内，总活动窗口数为 7 个。用户可以选择不同的上限，但当前上限是硬上限，绝不能超过。如果还有剩余任务，应先完成当前批次，再开始下一批次。
-
-子任务收到的 source address 是父任务的地址，而不是子任务自己的地址。子任务之后如果又创建了另一个任务，不能复制收到的地址并把它冒充成自己的地址；默认使用宿主创建的 reply route，只有在宿主确认 coordinator 的准确地址后，才使用直接地址。
-
-## 审查成果与能力回退
-
-reviewer 会收到原始目标、验收标准、必需检查，以及指向实际成果的具体 `review_source`。这个 source 可以是当前 shared workspace，也可以是隔离的 worktree、commit、branch、handoff 或 diff。reviewer 不需要实现者的推理或自我评价，也不能审查无法访问或已经过期的 baseline。
-
-所有 worker 在结束前都必须向直属 coordinator 发送结构化终端报告。只留在 worker 任务窗口中的结果，不算已经交付。
-
-planning、durable state、messaging、Git 和 worktree isolation 都是可选能力。工作流会依次使用当前可用的最强能力、普通的项目内记录、短期任务上下文。如果连续性或隔离能力降低，应如实报告；不能借此凭空增加依赖，也不能默默改变范围。
-
-最小用法：
-
-```text
-Use $orchestrating-codex-task-windows to split this project into independent implementation and review tasks, collect each required report, and keep final integration in the parent task.
-```
-
-## 安全边界
-
-Skill 不会自动 merge、push、publish、创建或修改 remote、执行破坏性清理，也不会自动做出最终发布结论。这些操作都需要明确授权，并由父任务负责验证。
-
-如果系统已经授予 full access，子任务不应再次请求许可。单纯的命令失败不等于权限问题：应先检查命令、工作目录、绝对路径、引号、shell 和进程启动方式。只有任务确实需要尚未授予的权限时，才应该请求授权。
+CLI 在 `v2.0.0` 中不支持也不可执行。[FUTURE_WORK.md](FUTURE_WORK.md) 记录了未来
+明确 opt-in 的生命周期监督、清理、结构化 report transport、身份关联、并发、reviewer
+创建、安全、跨平台和端到端验证要求。它绝不能自动成为 Desktop fallback。
 
 ## 验证
 
-请在仓库根目录运行确定性的合同检查和卫生检查：
+在仓库根目录运行确定性的 contract 与 hygiene 检查：
 
 ```text
 python -B scripts/validate_package.py
 ```
 
-检查内容包括 Skill 合同、机器专用路径、当前任务或项目标识符、疑似秘密值、未解决的 authoring marker、损坏的 Skill 引用，以及被打包的缓存成果物。
+检查包括 Skill contract、三语链接、机器专用路径、live task 或 project ID、secret-shaped
+value、未解决的 authoring marker、损坏的 Skill reference、旧名残留和缓存产物，也会验证
+`review_source` 与 `report_received` 契约。
 
 ## 许可证
 

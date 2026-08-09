@@ -1,29 +1,48 @@
-# 简体中文最小编排示例
+# Constellary Desktop 最小编排示例
 
 - 🇬🇧 [English](minimal-orchestration.en.md)
 - 🇯🇵 [日本語](minimal-orchestration.ja.md)
 - 🇨🇳 [简体中文](minimal-orchestration.zh-CN.md)
 
+这个示例展示最小的 Constellary Desktop 流程：创建一个有明确标题的同项目任务，核验
+宿主身份和侧边栏可见性，等待宿主事件，接收 report，然后创建一个全新的只读 reviewer。
+下面的值都是符号示例，实际使用时替换成当前项目和任务值。
 
-这个示例展示最小的“实现 → 汇报 → 审查 → 集成”流程。下面的值都是可复用的符号示例，
-实际使用时要替换成当前项目和任务的真实值。
+## 父任务 brief
 
-## 🧭 父任务 brief
+使用 `$constellary`、`coordination_surface: codex_desktop` 与
+`execution_environment: auto_safe`，把工作拆成边界清晰的任务：
 
-把工作拆成两个边界清晰的独立任务：
+- `T01`：在指定 source path 中实现修改。
+- `T01-R1`：实现完成后只读审查实际 artifact。
 
-- `TASK-001`：在指定源代码路径中实现 parser 修改。
-- `TASK-002`：在指定测试路径中添加针对性测试。
+父任务负责架构、任务台账、项目上下文、集成和最终结论。worker 不负责 merge、push、
+publish，也不能自行扩大范围。
 
-父任务负责架构、任务台账、项目上下文、集成和最终结论。worker 不负责 merge、push、publish，
-也不能自行扩大范围。
+## 标题协议
 
-## 📋 父任务台账
+创建前按宿主 NFC 归一化后的 34 个 Unicode code point 标题预算处理。先做 NFC Unicode normalization，折叠多余空白，
+再对 short goal 做确定性压缩，创建后核验宿主返回的 actual title：
+
+- `Constellary · T01 · 实现 · Desktop适配`
+- `Constellary · T01-R1 · 审查 · 适配`
+- `Constellary · T01-F1 · 修复 · 适配`
+- `Constellary · T01-R2 · 复审 · 适配`
+
+不接受宿主隐式截断或标题不匹配。
+
+## 父任务台账
 
 ```yaml
-task_id: TASK-001
-thread_id: CREATED_THREAD_001
+task_id: T01
+thread_id: CREATED_THREAD
 project_context: CURRENT_PROJECT
+project_id: CURRENT_PROJECT_ID
+host_id: CREATED_HOST
+title: "Constellary · T01 · 实现 · Desktop适配"
+sidebar_visible: true
+coordination_surface: codex_desktop
+execution_environment: auto_safe
 role: implementation
 depends_on: none
 status: active
@@ -34,15 +53,16 @@ review_source:
 review_verdict: pending
 ```
 
-父任务创建 child 后先验证项目上下文，然后等待匹配的活动。消息和完成事件都通过 `task_id` 与
-`thread_id` 关联。同一个任务的 report 和 completion event 到达时，只记录一个 terminal result。
+父任务通过 `create_thread` 创建，并核验 `thread_id`、`project_id`、`host_id`、实际
+`title` 和 `sidebar_visible`，随后使用 `wait_threads`、`read_thread` 与
+`send_message_to_thread`。匹配的 report 与 completion event 只产生一个终态结果。
 
-## 🛠️ worker brief
+## worker brief
 
 ```yaml
-task_id: TASK-001
+task_id: T01
 role: implementation
-goal: 更新指定源代码路径中的 parser validation。
+goal: 更新指定 source path。
 coordinator_task_id: CURRENT_COORDINATOR_TASK
 coordinator_report_channel: HOST_REPLY_TO_SOURCE
 project_root: DETECTED_PROJECT_ROOT
@@ -56,40 +76,24 @@ verification_required:
 report_required: true
 ```
 
-worker 在结束前主动发送一次结构化 terminal report。
+worker 在结束前主动向直属 coordinator 发送一次结构化 terminal report。
 
-## 📣 worker report
+## 全新的 reviewer
 
-```yaml
-status: DONE
-task_id: TASK-001
-work_completed: 已更新 parser validation。
-files_changed:
-  - assigned/source/path
-verification:
-  - python -m unittest: PASS
-evidence:
-  - 可复现的测试输出
-review_source:
-  kind: worktree
-  locator: REVIEWABLE_WORKTREE
-blockers: none
-remaining_concerns: none
-uncertainty: none
-```
+实现 artifact 可以通过 `review_source` 访问后，父任务创建独立只读 reviewer，标题为
+`Constellary · T01-R1 · 审查 · 适配`。reviewer 接收原始 acceptance criteria 与
+实际 artifact，确认同一 registered project 和 sidebar-visible task，并返回 `APPROVED`
+或 `CHANGES_REQUIRED`。修复使用新的 `T01-F1`，复审使用全新的 `T01-R2`。
 
-## 🔍 fresh reviewer
+如果必需 Desktop 能力缺失，父任务报告 `BLOCKED`。不得使用 CLI、terminal、PowerShell、
+临时 prompt 文件或 internal-only agent 作为 fallback。
 
-实现 artifact 可以访问后，父任务再创建一个独立的、默认只读的 reviewer task。reviewer 会收到原始
-目标、验收标准、必要检查和具体的 `review_source`。reviewer 返回 `APPROVED` 或
-`CHANGES_REQUIRED`，不能为了让自己的结论通过而直接修改实现。
-
-## ✅ 集成门槛
+## 集成门槛
 
 只有满足以下条件，父任务才能集成：
 
-1. 已收到并验证匹配的 report；
-2. 已核对修改路径和必要检查；
-3. reviewer 确实看到了实际 artifact；
-4. review verdict 是 `APPROVED`；
-5. blocker 和 remaining concern 已解决。
+1. 已接收并验证匹配的 report；
+2. 已核验 title、thread、host、project 和 sidebar 证据；
+3. 已核对修改路径和必要检查；
+4. reviewer 确实看到实际 artifact 且 verdict 为 `APPROVED`；
+5. blocker、关注点和不确定性已解决或如实报告。

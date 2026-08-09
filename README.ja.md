@@ -1,96 +1,141 @@
-# Codex タスクウィンドウのオーケストレーション
+# Constellary
 
 - 🇬🇧 [English](README.md)
 - 🇯🇵 [日本語](README.ja.md)
 - 🇨🇳 [简体中文](README.zh-CN.md)
 
-このリポジトリには、可視のコンテキスト分離された Codex タスクウィンドウ間で、範囲を限定した作業を調整するための `orchestrating-codex-task-windows` Skill が含まれています。
+Constellary は、独立して可視化される Codex Desktop タスク間で、境界を
+限定した作業を調整するための Codex Skill です。複数の独立タスクがそれぞれ
+星のように動き、上位タスクがそれらを意味のある星群へ組織します。
+中国語の承認文は「多个独立任务像星星一样各自运行，由上级任务把它们组织成一个有意义的星群。」です。
+
+この候補のバージョンは `v2.0.0-alpha`、安定版の目標は `v2.0.0` です。
+公開 Skill の slug は `constellary`、呼び出しは `$constellary` です。
+
+## v2.0.0-alpha の更新内容
+
+- **破壊的な名称変更:** プロジェクトと Skill を Constellary に統一しました。
+  呼び出しは `$constellary`、インストール対象は `skills/constellary/` です。
+  旧名称と旧呼び出しは migration record にだけ残します。
+- **実体のある Desktop 下流タスク:** `coordination_surface: codex_desktop` と
+  `desktop_required` により、親は同じ登録済み Codex プロジェクト内に、sidebar で
+  別々に見えるタスクを作成します。必須ホスト機能がなければ `BLOCKED` とし、
+  terminal や CLI へ fallback しません。
+- **安全なファイル実行:** `execution_environment: auto_safe` は書き込みリスクに
+  応じて Local、Worktree、または serialized execution を独立に選びます。
+  Desktop の調整面は変更しません。
+- **予測可能な識別と階層:** 作成時タイトルには決定的な 34 code-point protocol を
+  適用し、creator identity、task contract、report route、親が所有する統合責任で
+  論理的な上下関係を確立します。
+- **明示的な配信と review:** worker は構造化 report を送り、親は host event を
+  待機します。独立した read-only review は毎回新しいタスクを使い、修正も別の
+  bounded implementation task で行います。
+- **CLI の分離:** [FUTURE_WORK.md](FUTURE_WORK.md) には、Desktop workflow と
+  混在させない、将来の明示的 opt-in CLI Adapter を記録しました。
+- **公開時の hygiene:** すべての公開 regular file と path を対象に、machine-specific
+  path、identifier、secret-shaped value、private state、旧名称、broken link、
+  malformed title、cache artifact を検査します。
+- **リリース証拠:** 英語・日本語・簡体字中国語の README と example が同じ contract
+  を説明し、79 件の automated test と package validator で候補を保護します。
 
 ## 対象範囲
 
-これは Codex 専用の v1 です。独立タスクは、独自のコンテキストとライフサイクルを持つ、別の可視 Codex ウィンドウです。worker 内部の subagent と同じものではありません。worker が内部で subagent を使うことはできますが、親タスクが独立タスクを調整し、アーキテクチャ、統合、ユーザーとのコミュニケーション、最終的な主張を管理します。
+Constellary v2 の実行可能な調整面は Codex Desktop だけです。独立タスクは
+固有のコンテキストとライフサイクルを持つ、別の可視タスクウィンドウであり、
+worker 内部の subagent ではありません。親タスクがアーキテクチャ、task
+ledger、プロジェクトコンテキスト、統合、report、最終的な主張を管理します。
+
+ポリシーは決定的です。`coordination_surface: codex_desktop` と
+`desktop_required` を適用し、現在登録されている同じ Codex プロジェクトを
+解決します。親はホストの `create_thread` で下流タスクを作成し、`thread_id`、
+`project_id`、`host_id`、実際のタイトル、sidebar visibility を検証します。
+ホストイベントで待機し、ホストの thread で report を送ります。必須の Desktop
+機能がない場合は `BLOCKED` です。
+
+v2 に CLI fallback はありません。terminal、`codex`、`codex exec`、`codex.exe`、
+PowerShell、`pwsh`、`cmd`、Windows Terminal、`Start-Process`、subprocess、
+background shell、一時 prompt ファイル、internal-only agent は Desktop の
+成功ルートではありません。
 
 ## インストール
 
-`skills/orchestrating-codex-task-windows/` という単一ディレクトリを Codex の Skills ディレクトリにコピーしてください。リポジトリレベルのテストと検証スクリプトはメンテナー向けです。Skill 自体は単独でインストールできます。
+`skills/constellary/` という単一ディレクトリを Codex の Skills ディレクトリへ
+コピーしてください。リポジトリのテストと検証スクリプトはメンテナー向けで、
+Skill 自体は単独でインストールできます。
 
 ## 例
 
-好みの言語で、同じ最小オーケストレーション例から始めてください。
+好みの言語で同じ最小オーケストレーション例から始めてください。
 
 - 🇬🇧 [English の最小オーケストレーション例](examples/minimal-orchestration.en.md)
 - 🇯🇵 [日本語の最小オーケストレーション例](examples/minimal-orchestration.ja.md)
-- 🇨🇳 [简体中文の最小オーケストレーション例](examples/minimal-orchestration.zh-CN.md)
+- 🇨🇳 [简体中文最小编排示例](examples/minimal-orchestration.zh-CN.md)
 
-3 つの例は相互にリンクしています。今後の拡張案は
-[FUTURE_WORK.md](FUTURE_WORK.md) に記録しています。
+3 つの例は相互にリンクしています。今後の拡張は
+[FUTURE_WORK.md](FUTURE_WORK.md) に記録します。
+
+## タイトルプロトコル
+
+下流タスクのタイトルは次の形式です。
+
+`Constellary · <TaskID> · <Role> · <ShortGoal>`
+
+ホストのタイトル予算は NFC 正規化後の Unicode code point 34 個です。NFC Unicode
+normalization を適用し、余分な空白をまとめ、作成前に short goal を決定的に圧縮します。
+プロジェクト名、TaskID、role は保持し、作成後にホストが返した/表示した actual
+title を検証します。暗黙の切り詰めは受け入れません。短縮例は
+`Constellary · T01 · 实现 · Desktop适配` で、review、repair、re-review には
+`T01-R1`、`T01-F1`、`T01-R2` を使います。
 
 ## 実行時のデフォルト
 
-実装 worker と独立 reviewer を含むすべての下流ロールは、デフォルトで Luna Max、つまり `gpt-5.6-luna` と `max` reasoning を使用します。現在のユーザー指示またはプロジェクト設定によって、確認を繰り返さなくても、各ロールのモデル、reasoning レベル、またはその両方を上書きできます。
+実装 worker と独立 reviewer を含む全下流 role は、デフォルトで Luna Max、
+つまり `gpt-5.6-luna` と `max` reasoning を使用します。現在のユーザー指示または
+プロジェクト設定で、確認を繰り返さず model や reasoning を override できます。
+Skill が reviewer を黙って昇格させることはありません。
 
-Luna Max は範囲を限定した通常のレビューに適しています。セキュリティ、アーキテクチャ、並行性、データ整合性、リリースに関わる重要なレビューでは、ユーザーまたはプロジェクト設定で Sol、あるいは設定済みのより強力な reviewer を選択できます。誰もエスカレーションを要求または設定していない場合、Skill が reviewer を自動的に昇格させることはありません。ホストが実効ランタイムを公開している場合、親タスクはそれを記録し、置き換えや差異を正直に報告してください。
-
-実装とレビューには、それぞれ別の新しい独立タスクを使います。レビューはデフォルトで読み取り専用であり、修正が必要な場合は、新しい範囲限定の実装タスクとして実行します。
-
-## Sol を直接使うか、オーケストレーションを使うか
-
-変更が小さく密接に結びついている場合、または継続的なアーキテクチャ判断が必要な場合は、Sol の直接タスクを使ってください。実装、テスト、ドキュメント、個別の調査など、2 つ以上の範囲限定された責任を独立して完了できる場合は、この Skill を使ってください。
-
-セキュリティ、アーキテクチャ、並行性、データ整合性、リリースに関わる重要な作業では、Sol を親タスクまたは reviewer にし、Luna Max を worker にする実用的なハイブリッド構成も使えます。下流ウィンドウ 6 個という上限は目標ではありません。本当に必要な独立 worker だけから始めてください。
+実装と review は必ず別の新しい独立タスクで行います。review はデフォルトで
+read-only です。修正は新しい実装タスクにします。sidebar-visible peer の論理的な
+対応付けには creator identity、source thread、project context、task ledger、
+report route を使います。
 
 ## レポート、イベント待機、ポーリング
 
-次の 3 つは別の概念です。
+すべての worker は終了前に直属 coordinator へ構造化された terminal report を
+能動的に送ります。worker タスク内にだけ残る結果は配信済みではありません。親は
+一致する message、completion、blocker、failure、user event を待機し、変更のない
+タスクを routine polling しません。`task_id` と `thread_id` で対応付け、matching
+completion event を重複排除し、`report_received` と review verdict、`review_source`
+を分離します。
 
-- **Worker report:** worker または reviewer が、完了時またはブロック時に直属の coordinator へ能動的に送る構造化された結果です。作業結果、変更パス、チェック、証拠、blocker、懸念、不確実性を含みます。
-- **Event wait:** 親タスクが、関連するメッセージ、完了、blocker、失敗、ユーザーイベントによって起こされるまで待機することです。アクティブなタスクを継続的に監視せずに待機できます。
-- **Polling:** 変化があったか確認するため、変更されていない子タスクを繰り返し開いたり調べたりすることです。Skill では通常のポーリングを禁止しています。
+## 実行環境
 
-レポートとイベント待機は一緒に使います。worker はレポートを送り、親タスクは対応する活動を待機します。完了イベントが先に届いても、それは親タスクを起こすだけで、構造化されたレポートが受信・検証済みであることを意味しません。親タスクは、対応する構造化レポートを検証してから `report_received`（レポート受信済み）を設定します。構造化されたレポートが先に届いた場合、後から届く対応する完了イベントは 2 回目の配信として重複排除されます。どちらの順番でも、各タスクの終端結果は 1 件だけ記録され、もう一方の対応する配信が重複結果を作ることはありません。
+調整面とファイル実行環境は別の判断です。公開ポリシーは
+`execution_environment: auto_safe` です。準備済みの isolated copy または
+serialized single-writer には Local、Git リポジトリでの同時書き込みや重複リスク
+には Worktree を使います。ユーザーは override できます。安全な分離がなければ
+serialize するか `BLOCKED` と報告します。
 
-## プロジェクトと子タスク
+## 将来の CLI Adapter
 
-独立した子タスクは、デフォルトで親タスクに登録された Codex プロジェクトを使います。worktree は同じプロジェクト内の分離された作業領域であり、子タスクを projectless にするものではありません。Projectless 実行は、本当にファイルを扱わない作業、またはユーザーが明示的に求めた場合に限ります。
-
-子タスクを作成した後、coordinator はそのプロジェクトコンテキストを確認します。意図したプロジェクトを選択または検証できない場合、coordinator は dispatch 前に停止し、黙って projectless ウィンドウを作成しません。
-
-複数の子タスクを同時に実行する場合、親タスクは task ledger 内で各 `task_id` と `thread_id` を対応付けます。メッセージの順番で所有者を判断してはいけません。レポートと完了イベントはそれらの ID で対応付けます。アクティブなレポートと対応する完了イベントが届いても、終端結果は 1 件だけです。
-
-デフォルトでは、親タスクは同時に下流ウィンドウを 6 個まで実行します。親タスクを含めると、アクティブなウィンドウは合計 7 個です。ユーザーは別の上限を選べますが、現在の上限は hard ceiling であり、絶対に超えてはいけません。残りのタスクがある場合は、現在の batch を完了してから次の batch を開始します。
-
-子タスクが受け取る source address は、子タスク自身のアドレスではなく親タスクのアドレスです。子タスクがさらに別のタスクを作成する場合、受け取ったアドレスを自分のものとして child brief にコピーしてはいけません。デフォルトはホストが作成した reply route であり、coordinator の正確なアドレスがホストによって確認された場合だけ直接アドレスを使います。
-
-## レビュー成果物と機能フォールバック
-
-reviewer には、元の goal、acceptance criteria、required checks、そして実際の成果物に対応する具体的な `review_source` を渡します。source は、現在の shared workspace、分離された worktree、commit、branch、handoff、diff のいずれかです。reviewer に実装者の推論や自己評価は必要ありません。また、アクセスできない、または古い baseline をレビューしてはいけません。
-
-すべての worker は終了する前に、直属の coordinator へ構造化された終端レポートを送らなければなりません。worker タスク内にだけ残された結果は、配信されたものとはみなしません。
-
-planning、durable state、messaging、Git、worktree isolation は任意の機能です。ワークフローは、利用可能な最も強力な機能、通常のプロジェクト内記録、短期的なタスクコンテキストの順に使います。継続性や分離性が低下した場合は正直に報告します。それを理由に依存関係を作ったり、スコープを黙って変更したりしてはいけません。
-
-最小使用例:
-
-```text
-Use $orchestrating-codex-task-windows to split this project into independent implementation and review tasks, collect each required report, and keep final integration in the parent task.
-```
-
-## 安全境界
-
-Skill は、merge、push、publish、remote の作成・変更、破壊的なクリーンアップ、最終的なリリース主張を自動的には行いません。これらの操作には明示的な権限が必要であり、親タスクが検証を管理します。
-
-システムがすでに full access を付与している場合、子タスクは再度許可を求めてはいけません。コマンド失敗だけで権限の問題だと判断してはいけません。最初にコマンド、作業ディレクトリ、絶対パス、引用符、shell、プロセス起動を確認します。未付与の権限が本当に必要な場合だけ確認してください。
+CLI は `v2.0.0` ではサポートも実行もしません。[FUTURE_WORK.md](FUTURE_WORK.md)
+に、明示的 opt-in の lifecycle supervision、cleanup、structured report transport、
+identity、concurrency、reviewer 作成、security、cross-platform、end-to-end 検証を
+記録しています。Desktop の自動 fallback にはしません。
 
 ## 検証
 
-リポジトリのルートから、決定的な契約検証と衛生チェックを実行します。
+リポジトリのルートから決定的な contract と hygiene のチェックを実行します。
 
 ```text
 python -B scripts/validate_package.py
 ```
 
-このチェックでは、Skill の契約、マシン固有パス、現在の task や project の ID、秘密情報のような値、未解決の authoring marker、壊れた Skill 参照、パッケージ化されたキャッシュ成果物を確認します。
+チェック対象には Skill contract、3 言語リンク、machine-specific path、live task
+または project ID、secret-shaped value、未解決 authoring marker、壊れた Skill
+reference、old-name residue、cache artifact が含まれます。`review_source` と
+`report_received` の契約も確認します。
 
-## ライセンス
+## License
 
 このリポジトリは [MIT License](LICENSE) で公開されています。

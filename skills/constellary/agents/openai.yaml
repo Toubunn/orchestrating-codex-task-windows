@@ -1,0 +1,5 @@
+interface:
+  version: "v2.0.0-alpha"
+  display_name: "Constellary"
+  short_description: "Coordinate independent Codex Desktop tasks"
+  default_prompt: "Use $constellary to coordinate independent Codex Desktop tasks and collect their reports."

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 import unittest
+from tempfile import TemporaryDirectory
 from pathlib import Path
+
+import scripts.validate_package as package_validator
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL = ROOT / "skills" / "orchestrating-codex-task-windows"
+SKILL = ROOT / "skills" / "constellary"
 SKILL_MD = SKILL / "SKILL.md"
+CONSTELLARY_SKILL = SKILL
+CONSTELLARY_SKILL_MD = SKILL_MD
 
 
 def read(path: Path) -> str:
@@ -60,6 +66,36 @@ def schema_fields(schema: str) -> set[str]:
     return set(re.findall(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_-]*):", schema))
 
 
+# Discovery deliberately accepts bounded same-line title-like candidates. Strict
+# title validation below owns raw NFC, four-part, separator, and budget checks.
+TITLE_EXAMPLE_PATTERN = re.compile(
+    r"(?P<title>Constellary[^\S\r\n`\"\\]*·[^\S\r\n`\"\\]*"
+    r"T\d+(?:-(?:R|F)\d+)?"
+    r"[^\r\n`\"\\]*)"
+)
+EXPECTED_TITLE_COMPONENTS = {
+    "T01": ("实现", "Desktop适配"),
+    "T01-R1": ("审查", "适配"),
+    "T01-F1": ("修复", "适配"),
+    "T01-R2": ("复审", "适配"),
+}
+NO_PROJECT_TERM = "project" + "less"
+NO_PROJECT_CONTRADICTION_PATTERNS = (
+    r"\b(?:every|all)\s+(?:child|children|task|tasks)\b.{0,80}\b"
+    + "project"
+    + "less"
+    + r"\b",
+    r"\b(?:no-file|fileless)\b.{0,80}\b"
+    + "project"
+    + "less"
+    + r"\b",
+    r"\b(?:project|coordination)\b.{0,80}\b"
+    + "project"
+    + "less"
+    + r"\b",
+)
+
+
 LEDGER_CONTRADICTION_PATTERNS = (
     r"\b(?:arrival|completion) order\b.{0,80}\b(?:determines|controls|assigns)\b.{0,40}\bownership\b",
     r"\bownership\b.{0,80}\b(?:assigned|determined|controlled)\b.{0,80}\b(?:whichever|first)\b",
@@ -67,7 +103,7 @@ LEDGER_CONTRADICTION_PATTERNS = (
 )
 
 PROJECT_CONTRADICTION_PATTERNS = (
-    r"\b(?:every|all)\s+(?:child|children|task|tasks)\b.{0,80}\b(?:projectless|without a project)\b",
+    *NO_PROJECT_CONTRADICTION_PATTERNS,
     r"\b(?:verification|verify(?:ing)? the child)\b.{0,40}\b(?:optional|not required|unnecessary)\b",
     r"\b(?:silently|quietly)\b.{0,80}\b(?:fallback|fall\s+back)\b",
 )
@@ -148,8 +184,8 @@ KEYWORD_DECOY = """
 ## Unrelated notes
 
 The task ledger mentions task_id, thread_id, depends_on, report_received,
-review_source, and deduplicate. Same project, projectless, no-file, explicit
-user request, and verify the child are all terms in this note. A worker actively
+    review_source, and deduplicate. Same registered project, no-file, explicit
+    user request, and verify the child are all terms in this note. A worker actively
 sends a report, an event-driven wait sees whichever arrives first, and the text
 says does not routinely poll. A reviewer can mention shared_workspace,
 worktree, commit, branch, diff, the actual artifact, and the implementer's
@@ -157,8 +193,8 @@ reasoning without making any of those relationships authoritative.
 
 ## Contradictory notes
 
-Arrival order determines ownership. Every child is projectless, the child is
-never verified, routine polling is required, and the reviewer relies on the
+Arrival order determines ownership. Every child uses an unverified project
+context, the child is never verified, routine polling is required, and the reviewer relies on the
 implementer's reasoning instead of the original acceptance criteria.
 
 ```yaml
@@ -207,15 +243,14 @@ review_source: pending
 """
 
 
-ADVERSARIAL_PROJECT_DECOY = """
+ADVERSARIAL_PROJECT_DECOY = f"""
 ## Project context contract
 
 The same project rule says children inherit the current registered project,
 verifies the child-creation result before considering dispatch complete, and
-projectless execution is valid only for genuinely no-file work or an explicit
-user request. The coordinator stops dispatch rather than silently degrading.
-The opposing rule says every child runs without a project, verification is
-optional, and a failed selection may quietly fall back to projectless execution.
+no-file work still retains that project context. The coordinator stops dispatch
+rather than silently degrading. The opposing rule says every child is
+{NO_PROJECT_TERM} and a failed selection may quietly fall back.
 
 ```yaml
 project_context:
@@ -367,7 +402,7 @@ class SkillContractTests(unittest.TestCase):
 
     def test_frontmatter_identifies_the_skill(self) -> None:
         text = read(SKILL_MD)
-        self.assertRegex(text, r"(?ms)^---\s*\nname: orchestrating-codex-task-windows\s*$")
+        self.assertRegex(text, r"(?ms)^---\s*\nname: constellary\s*$")
         self.assertRegex(text, r"(?m)^description: Use when .+")
 
     def test_independent_tasks_are_not_described_as_subagents(self) -> None:
@@ -490,14 +525,14 @@ class SkillContractTests(unittest.TestCase):
                     "environment: worktree",
                 ),
                 phrases=(
-                    "same project",
+                    "same registered project",
                     "children inherit the current registered project",
                     "verifies the child-creation result",
                     "before considering dispatch complete",
-                    "projectless execution is valid only for genuinely no-file work or an explicit user request",
+                    "no-file work still retains that project context",
                     "stops dispatch rather than silently degrading",
                 ),
-                forbidden=("silently falling back to projectless",),
+                forbidden=PROJECT_CONTRADICTION_PATTERNS,
             )
         )
 
@@ -559,8 +594,7 @@ class SkillContractTests(unittest.TestCase):
             "report_received",
             "review_source",
             "deduplicate",
-            "same project",
-            "projectless",
+            "same registered project",
             "no-file",
             "explicit user request",
             "verify the child",
@@ -620,7 +654,7 @@ class SkillContractTests(unittest.TestCase):
             )
         )
 
-    def test_contract_helper_rejects_project_fallback_paraphrase(self) -> None:
+    def test_contract_helper_rejects_project_context_contradiction_paraphrase(self) -> None:
         self.assertFalse(
             contract_matches(
                 ADVERSARIAL_PROJECT_DECOY,
@@ -632,11 +666,11 @@ class SkillContractTests(unittest.TestCase):
                     "environment: worktree",
                 ),
                 phrases=(
-                    "same project",
+                    "same registered project",
                     "children inherit the current registered project",
                     "verifies the child-creation result",
                     "before considering dispatch complete",
-                    "projectless execution is valid only for genuinely no-file work or an explicit user request",
+                    "no-file work still retains that project context",
                     "stops dispatch rather than silently degrading",
                 ),
                 forbidden=PROJECT_CONTRADICTION_PATTERNS,
@@ -842,18 +876,24 @@ class SkillContractTests(unittest.TestCase):
         words = read(SKILL_MD).split()
         self.assertLessEqual(len(words), 1500)
 
-    def test_environment_mapping_prefers_projectless_or_worktree_and_has_fallbacks(self) -> None:
+    def test_environment_mapping_keeps_same_project_coordination_and_safe_overrides(self) -> None:
         text = (read(SKILL_MD) + read(SKILL / "references" / "capability-fallbacks.md")).lower()
         for phrase in (
-            "no-file task",
-            "projectless",
+            "no-file",
+            "execution_environment: auto_safe",
+            "same registered project",
+            "local",
+            "worktree",
             "worktree_when_writing",
             "preference, not a prerequisite",
             "isolated copy",
             "non-overlapping write paths",
             "serialized execution",
+            "blocked",
+            "user may override",
         ):
             self.assertIn(phrase, text)
+        self.assertNotIn(NO_PROJECT_TERM, text)
 
     def test_terminal_status_and_review_verdict_are_separate_contracts(self) -> None:
         text = (read(SKILL_MD) + read(SKILL / "references" / "task-contracts.md")).lower()
@@ -898,6 +938,277 @@ class SkillContractTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 self.assertIn(f"`{kind}`", contracts)
         self.assertIn("environment is not a review source", contracts)
+
+
+class ConstellaryIdentityTests(unittest.TestCase):
+    def test_constellary_skill_directory_and_contract_exist(self) -> None:
+        self.assertTrue(CONSTELLARY_SKILL_MD.is_file())
+        self.assertTrue((CONSTELLARY_SKILL / "agents" / "openai.yaml").is_file())
+
+    def test_constellary_frontmatter_uses_v2_identity(self) -> None:
+        text = read(CONSTELLARY_SKILL_MD)
+        self.assertRegex(text, r"(?ms)^---\s*\nname: constellary\s*$")
+        self.assertIn("v2.0.0-alpha", text)
+        self.assertIn("$constellary", text)
+
+    def test_constellary_interface_uses_display_name_and_invocation(self) -> None:
+        text = read(CONSTELLARY_SKILL / "agents" / "openai.yaml")
+        self.assertIn('display_name: "Constellary"', text)
+        self.assertIn("$constellary", text)
+
+
+class DesktopRuntimeContractTests(unittest.TestCase):
+    def test_v2_runtime_is_deterministically_desktop_required(self) -> None:
+        text = read(CONSTELLARY_SKILL_MD).lower()
+        required = (
+            "coordination_surface: codex_desktop",
+            "desktop_required",
+            "same registered codex project",
+            "create_thread",
+            "wait_threads",
+            "send_message_to_thread",
+            "mark the dispatch blocked",
+        )
+        self.assertEqual([], [phrase for phrase in required if phrase not in text])
+
+    def test_desktop_creation_verifies_identity_context_title_and_visibility(self) -> None:
+        text = read(CONSTELLARY_SKILL_MD).lower()
+        required = (
+            "thread_id",
+            "project_id",
+            "host_id",
+            "title",
+            "sidebar visibility",
+            "post-creation",
+        )
+        self.assertEqual([], [phrase for phrase in required if phrase not in text])
+
+    def test_missing_desktop_capability_blocks_without_terminal_fallback(self) -> None:
+        text = read(CONSTELLARY_SKILL_MD).lower()
+        required = (
+            "missing desktop capability",
+            "blocked",
+            "no cli fallback",
+            "forbidden",
+            "codex exec",
+            "codex.exe",
+            "powershell",
+            "pwsh",
+            "cmd",
+            "windows terminal",
+            "start-process",
+            "subprocess",
+            "background shell",
+            "temporary prompt",
+            "internal-only agent",
+        )
+        self.assertEqual([], [phrase for phrase in required if phrase not in text])
+        self.assertNotRegex(text, r"(?i)silently\s+(?:fall\s*back|switch)\s+to\s+(?:cli|terminal)")
+
+    def test_behavior_scenarios_include_sanitized_desktop_misrouting_regression(self) -> None:
+        scenarios = read(ROOT / "tests" / "behavior-scenarios.md").lower()
+        required = (
+            "desktop-required regression",
+            "same-project sidebar task",
+            "terminal worker",
+            "blocked",
+            "sanitized",
+        )
+        self.assertEqual([], [phrase for phrase in required if phrase not in scenarios])
+
+
+class DesktopTitleAndHierarchyTests(unittest.TestCase):
+    def _contract_text(self) -> str:
+        return read(CONSTELLARY_SKILL_MD) + read(CONSTELLARY_SKILL / "references" / "task-contracts.md")
+
+    def _public_title_examples(self, root: Path = ROOT) -> list[tuple[Path, str]]:
+        examples: list[tuple[Path, str]] = []
+        for path in package_validator.public_files(root):
+            text = package_validator.read_public_text(path)
+            for match in TITLE_EXAMPLE_PATTERN.finditer(text):
+                examples.append((path, match.group("title")))
+        return examples
+
+    def test_title_discovery_scans_extensionless_unknown_files_and_adjacent_separators(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            canonical = " · ".join(("Constellary", "T01", "实现", "Desktop" + "适配"))
+            review = " · ".join(("Constellary", "T01-R1", "审查", "适配"))
+            malformed = canonical.replace(" · 实现", " ·· 实现")
+            (root / "LICENSE").write_bytes(
+                (canonical + "\n").encode("utf-8") + b"\xff"
+            )
+            (root / "metadata.json").write_text(review + "\n", encoding="utf-8")
+            (root / "malformed.md").write_text(malformed + "\n", encoding="utf-8")
+
+            examples = self._public_title_examples(root)
+            by_name = {path.name: title for path, title in examples}
+
+        self.assertIn("LICENSE", by_name)
+        self.assertIn("metadata.json", by_name)
+        self.assertIn("malformed.md", by_name)
+
+        malformed = by_name["malformed.md"]
+        normalized = unicodedata.normalize("NFC", malformed)
+        parts = normalized.split(" · ")
+        is_strict = (
+            malformed == normalized
+            and len(parts) == 4
+            and malformed == " · ".join(parts)
+            and len(normalized) <= 34
+        )
+        self.assertFalse(is_strict)
+
+    def test_title_discovery_finds_noncanonical_title_like_mutations_for_rejection(self) -> None:
+        separator = " " + "·" + " "
+        parts = ("Constellary", "T" + "01", "实" + "现", "Desktop" + "适配")
+        canonical = separator.join(parts)
+        mutations = (
+            parts[0] + "  " + "·" + " " + separator.join(parts[1:]),
+            parts[0] + separator + "\t" + parts[1] + separator.join(("", *parts[2:])),
+            canonical + " " + "·" + " extra",
+            separator.join((*parts[:3], "x" * 40)),
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                candidates = [match.group("title") for match in TITLE_EXAMPLE_PATTERN.finditer(mutation)]
+                self.assertEqual([mutation], candidates)
+                normalized = unicodedata.normalize("NFC", candidates[0])
+                parts = candidates[0].split(" · ")
+                is_strict = (
+                    candidates[0] == normalized
+                    and len(parts) == 4
+                    and candidates[0] == " · ".join(parts)
+                    and len(normalized) <= 34
+                )
+                self.assertFalse(is_strict)
+
+    def test_title_discovery_ignores_schema_placeholders_and_plain_explanations(self) -> None:
+        text = (
+            "Constellary · <TaskID> · <Role> · <ShortGoal>\n"
+            "Constellary coordinates visible tasks."
+        )
+        candidates = [match.group("title") for match in TITLE_EXAMPLE_PATTERN.finditer(text)]
+        self.assertEqual([], candidates)
+
+    def test_title_protocol_has_deterministic_host_budget_and_post_creation_check(self) -> None:
+        text = self._contract_text().lower()
+        required = (
+            "constellary · <taskid> · <role> · <shortgoal>",
+            "title budget",
+            "max_title_length: 34",
+            "34 nfc-normalized unicode code points",
+            "unicode normalization",
+            "deterministic compression",
+            "before creation",
+            "post-creation title verification",
+            "actual title",
+            "mismatch",
+            "blocked",
+        )
+        self.assertEqual([], [phrase for phrase in required if phrase not in text])
+
+    def test_all_public_title_examples_are_nfc_bounded_and_structured(self) -> None:
+        examples = self._public_title_examples()
+        self.assertTrue(examples, "public title examples must be discoverable")
+        seen: set[str] = set()
+        for path, title in examples:
+            with self.subTest(path=path.relative_to(ROOT), title=title):
+                normalized = unicodedata.normalize("NFC", title)
+                parts = normalized.split(" · ")
+                self.assertLessEqual(len(normalized), 34)
+                self.assertEqual(4, len(parts))
+                self.assertEqual(title, normalized)
+                self.assertEqual(title, " · ".join(parts))
+                self.assertEqual(3, title.count(" · "))
+                self.assertEqual("Constellary", parts[0])
+                self.assertRegex(parts[1], r"^T\d+(?:-(?:R|F)\d+)?$")
+                self.assertIn(parts[1], EXPECTED_TITLE_COMPONENTS)
+                expected_role, expected_goal = EXPECTED_TITLE_COMPONENTS[parts[1]]
+                self.assertEqual(expected_role, parts[2])
+                self.assertEqual(expected_goal, parts[3])
+                seen.add(parts[1])
+        self.assertEqual(set(EXPECTED_TITLE_COMPONENTS), seen)
+
+    def test_title_and_hierarchy_examples_preserve_visible_lineage(self) -> None:
+        text = self._contract_text()
+        required = (
+            "Constellary · T01 · 实现 · Desktop适配",
+            "Constellary · T01-R1 · 审查 · 适配",
+            "Constellary · T01-F1 · 修复 · 适配",
+            "Constellary · T01-R2 · 复审 · 适配",
+            "creator_task_id",
+            "source_thread_id",
+            "same registered project",
+            "sidebar-visible",
+            "worker-internal",
+            "not the primary downstream-task mechanism",
+        )
+        self.assertEqual([], [phrase for phrase in required if phrase not in text])
+
+    def test_same_registered_project_is_required_for_every_downstream_task(self) -> None:
+        contracts = read(CONSTELLARY_SKILL / "references" / "task-contracts.md")
+        self.assertTrue(
+            contract_matches(
+                contracts,
+                "Project context contract",
+                fields=("project_context", "kind", "project_id", "environment"),
+                schema_fragments=(
+                    "kind: project",
+                    "project_id: CURRENT_PROJECT",
+                    "environment: worktree",
+                ),
+                phrases=(
+                    "same registered project",
+                    "children inherit the current registered project",
+                    "verifies the child-creation result",
+                    "before considering dispatch complete",
+                    "stops dispatch rather than silently degrading",
+                ),
+                forbidden=NO_PROJECT_CONTRADICTION_PATTERNS,
+            )
+        )
+
+        public_fallbacks = []
+        for path in package_validator.public_files(ROOT):
+            if path.suffix.lower() not in package_validator.TEXT_SUFFIXES:
+                continue
+            if NO_PROJECT_TERM in path.read_text(encoding="utf-8", errors="replace").casefold():
+                public_fallbacks.append(str(path.relative_to(ROOT)))
+        self.assertEqual([], public_fallbacks)
+
+    def test_same_registered_project_contract_rejects_no_project_target_fallback(self) -> None:
+        no_project_fallback = f"""
+## Project context contract
+
+The same registered project is verified before dispatch, but the opposing rule
+says every child is {NO_PROJECT_TERM} and may fall back when project selection
+fails.
+
+```yaml
+project_context:
+  kind: project
+  project_id: CURRENT_PROJECT
+  environment: worktree
+```
+"""
+        self.assertFalse(
+            contract_matches(
+                no_project_fallback,
+                "Project context contract",
+                fields=("project_context", "kind", "project_id", "environment"),
+                schema_fragments=(
+                    "kind: project",
+                    "project_id: CURRENT_PROJECT",
+                    "environment: worktree",
+                ),
+                phrases=(
+                    "same registered project",
+                    "verifies the child-creation result",
+                ),
+                forbidden=NO_PROJECT_CONTRADICTION_PATTERNS,
+            )
+        )
 
 
 if __name__ == "__main__":

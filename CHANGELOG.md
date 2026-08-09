@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.0.0-alpha — Constellary migration history
+
+- Renamed the public Skill from `orchestrating-codex-task-windows` (display name
+  “Orchestrating Codex Task Windows”) to `Constellary`, with slug `constellary`
+  and invocation `$constellary`.
+- Made Codex Desktop the only executable v2 coordination surface and recorded
+  the breaking change from the prior v1 contract.
+- Added same-project host verification, deterministic 34-code-point NFC title
+  normalization/compression, sidebar visibility evidence, explicit lineage
+  titles, and BLOCKED behavior when Desktop capabilities are unavailable.
+- Added matching release summaries to all three READMEs, multilingual example
+  updates, all-public-file privacy checks, a 79-test validation suite, and a
+  concrete future CLI Adapter backlog. CLI is not supported in `v2.0.0`.
+
 ## 2026-08-08
 
 - Added the MIT license.

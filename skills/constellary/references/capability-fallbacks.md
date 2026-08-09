@@ -10,6 +10,22 @@ Existing suitable capability
 
 Report reduced continuity or isolation honestly. The loss of an optional capability may lower recovery or concurrency quality, but it does not block an otherwise authorized task.
 
+## Codex Desktop adapter boundary
+
+Constellary v2 has one executable coordination surface:
+`coordination_surface: codex_desktop` with the `desktop_required` policy. The
+parent resolves the same registered project, calls the host `create_thread`
+capability, and verifies `thread_id`, `project_id`, `host_id`, actual title,
+and sidebar visibility after creation. It waits through `wait_threads` and
+communicates reports with `send_message_to_thread`.
+
+If a mandatory Desktop capability is missing, the result is `BLOCKED`. The
+workflow never silently or explicitly uses `codex`, `codex exec`, `codex.exe`,
+PowerShell, `pwsh`, `cmd`, Windows Terminal, `Start-Process`, subprocess,
+background shell, a temporary prompt/report file, or an internal-only agent as
+a successful Desktop route. A future CLI Adapter must be separately opted into,
+documented, and tested.
+
 ## Granted authority and command failures
 
 Before attempting elevation, inspect the granted authority or permission profile. Under full/unrestricted access, do not request elevation or approval. Do not reconfirm authority already granted.
@@ -18,7 +34,12 @@ Command or process failure alone is not evidence of missing permission. First di
 
 ## Environment mapping
 
-Use projectless execution for a no-file task when the host supports it. For file-writing work, `worktree_when_writing` is a preference, not a prerequisite. If no worktree is available, choose an isolated copy, non-overlapping write paths, or serialized execution according to the risk of concurrent edits.
+Every downstream task retains the current registered project, including no-file
+work. The file execution environment may use Local or Worktree; for file-writing
+work, `worktree_when_writing` is a preference, not a prerequisite. If no
+worktree is available, choose an isolated copy, non-overlapping write paths, or
+serialized execution according to the risk of concurrent edits, and mark the
+dispatch BLOCKED when safe execution cannot be established.
 
 ## Parent planning boundary
 

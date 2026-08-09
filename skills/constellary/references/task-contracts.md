@@ -2,6 +2,72 @@
 
 Use these contracts as dispatch interfaces. The values below are neutral symbolic examples. Replace them with the detected project values and the assigned scope when creating a real task; do not copy local paths, private identifiers, or secrets into a public Skill package.
 
+## Downstream title contract
+
+Every visible downstream task uses the schema
+`Constellary · <TaskID> · <Role> · <ShortGoal>`. The host title budget and
+normalization are explicit so the host cannot silently produce an ambiguous
+title:
+
+```yaml
+title_budget:
+  max_title_length: 34
+  unicode_normalization: NFC
+  whitespace: collapse_redundant
+  short_goal: deterministic_compression_before_creation
+```
+
+Apply deterministic compression before creation, preserving `Constellary`,
+the task ID, and role. Perform post-creation title verification against the
+actual title returned/displayed by the host. A mismatch is BLOCKED; implicit
+host truncation is not accepted. The maximum is 34 NFC-normalized Unicode code
+points. The normalized observed example is:
+`Constellary · T01 · 实现 · Desktop适配`.
+
+The visible title lineage examples are:
+
+- `Constellary · T01 · 实现 · Desktop适配`
+- `Constellary · T01-R1 · 审查 · 适配`
+- `Constellary · T01-F1 · 修复 · 适配`
+- `Constellary · T01-R2 · 复审 · 适配`
+
+Sidebar-visible peers are linked logically by `creator_task_id`,
+`source_thread_id`, the task ledger, report route, and the same registered project.
+A worker-internal mechanism is not the primary downstream-task mechanism and
+cannot substitute for the host-created visible task.
+
+## Codex Desktop adapter contract
+
+The v2 adapter maps the core orchestration contract to the Codex Desktop host:
+
+```yaml
+coordination_surface: codex_desktop
+runtime_policy: desktop_required
+project_context:
+  kind: project
+  project_id: CURRENT_PROJECT
+creation_capability: create_thread
+verification_capabilities:
+  - list_threads
+  - read_thread
+  - wait_threads
+  - send_message_to_thread
+required_evidence:
+  - thread_id
+  - project_id
+  - host_id
+  - title
+  - sidebar_visibility
+missing_capability_result: BLOCKED
+```
+
+The parent resolves the current registered project, creates a separately
+visible task, verifies all required evidence after creation, waits on host task
+events, and receives the report through host thread messaging. If a mandatory
+capability is unavailable, the parent records `BLOCKED`. A terminal, CLI,
+PowerShell, `Start-Process`, subprocess, background shell, temporary prompt
+file, or internal-only agent is never a successful Desktop substitute.
+
 ## Parent task ledger contract
 
 The parent owns one authoritative task ledger keyed by `task_id`. Each row
@@ -42,9 +108,10 @@ The ledger fields mean:
 
 ## Project context contract
 
-Children inherit the current registered project; this is the same project as
-the parent by default. The parent verifies the child-creation result
-before considering dispatch complete. The default project context is:
+Children inherit the current registered project; every downstream task uses the
+same registered project as the parent by default. The parent verifies the
+child-creation result before considering dispatch complete. The default project
+context is:
 
 ```yaml
 project_context:
@@ -54,10 +121,10 @@ project_context:
 ```
 
 For a non-Git project, use `environment: local` while retaining the selected
-project context. Projectless execution is valid only for genuinely no-file
-work or an explicit user request. If the parent cannot choose or verify the
-current project, it stops dispatch rather than silently degrading to a
-projectless child.
+project context. No-file work still retains that project context. The file
+execution environment may be Local or Worktree, and a user override changes
+only that environment choice. If the parent cannot choose or verify the
+current project, it stops dispatch rather than silently degrading.
 
 ## Implementation task contract
 

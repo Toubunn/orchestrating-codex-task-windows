@@ -1,18 +1,68 @@
-# Orchestrating Codex Task Windows
+# Constellary
 
 - 🇬🇧 [English](README.md)
 - 🇯🇵 [日本語](README.ja.md)
 - 🇨🇳 [简体中文](README.zh-CN.md)
 
-This repository contains the `orchestrating-codex-task-windows` Skill for coordinating bounded work across visible, context-isolated Codex task windows.
+Constellary is a Codex Skill for coordinating bounded work across independent,
+visible Codex Desktop tasks. Multiple independent tasks run like stars, each on
+its own, while the parent task organizes them into a meaningful constellation.
+The approved Chinese wording is: 多个独立任务像星星一样各自运行，由上级任务把它们组织成一个有意义的星群。
+
+This candidate is `v2.0.0-alpha`; the intended stable target is `v2.0.0`.
+The public Skill slug is `constellary`, and the invocation is `$constellary`.
+
+## What's new in v2.0.0-alpha
+
+- **Breaking rename:** the project and Skill are now Constellary. Use
+  `$constellary` and install `skills/constellary/`; the previous public name and
+  invocation are retained only in the migration record.
+- **Real Desktop downstream tasks:** `coordination_surface: codex_desktop` and
+  `desktop_required` require the parent to create separately visible tasks in
+  the same registered Codex project. Missing host capabilities produce
+  `BLOCKED`, never a terminal or CLI fallback.
+- **Safer file execution:** `execution_environment: auto_safe` independently
+  chooses Local, Worktree, or serialized execution from write risk. It does not
+  change the Desktop coordination surface.
+- **Predictable identity and hierarchy:** creation-time titles follow a
+  deterministic 34-code-point protocol, while creator identity, task contracts,
+  report routes, and parent-owned integration establish the logical hierarchy.
+- **Explicit delivery and review:** workers send structured reports, the parent
+  waits on host events, and each independent read-only review uses a fresh task;
+  repairs use another bounded implementation task.
+- **CLI kept separate:** [FUTURE_WORK.md](FUTURE_WORK.md) records a future,
+  explicit opt-in CLI Adapter rather than mixing it into the Desktop workflow.
+- **Publication hygiene:** validation scans every public regular file and path
+  for machine-specific paths, identifiers, secret-shaped values, private state,
+  old-name residue, broken links, malformed titles, and cache artifacts.
+- **Release evidence:** the English, Japanese, and Simplified Chinese READMEs
+  and examples describe the same contract, and 79 automated tests plus the
+  package validator protect the candidate.
 
 ## Scope
 
-This is a Codex-only v1. An independent task is a separate, visible Codex window with its own context and lifecycle; it is not the same thing as a worker-internal subagent. A worker may use subagents internally, while the parent coordinates independent tasks and owns architecture, integration, user communication, and final claims.
+Constellary v2 uses Codex Desktop as its only executable coordination surface.
+An independent task is a separate visible task window with its own context and
+lifecycle; it is not a worker-internal subagent. The parent owns architecture,
+the task ledger, project context, integration, reports, and final claims.
+
+The current policy is deterministic: `coordination_surface: codex_desktop` and
+`desktop_required`. The parent resolves the current registered Codex project,
+creates the downstream task through the host `create_thread` capability, then
+verifies `thread_id`, `project_id`, `host_id`, the actual title, and sidebar
+visibility. It waits with host events and communicates through the host thread.
+If a mandatory Desktop capability is missing, the dispatch is `BLOCKED`.
+
+There is no CLI fallback in v2. A terminal, `codex`, `codex exec`, `codex.exe`,
+PowerShell, `pwsh`, `cmd`, Windows Terminal, `Start-Process`, subprocess,
+background shell, temporary prompt file, or internal-only agent is not a
+successful Desktop route.
 
 ## Install
 
-Copy the single directory `skills/orchestrating-codex-task-windows/` into the Codex skills directory. The repository-level tests and validation script are for maintainers; the Skill itself remains independently installable.
+Copy the single directory `skills/constellary/` into the Codex Skills
+directory. The repository-level tests and validation script are for maintainers;
+the Skill itself remains independently installable.
 
 ## Examples
 
@@ -25,73 +75,59 @@ Start with the same minimal example in the language you prefer:
 The three examples link to one another. Future extensions are tracked in
 [FUTURE_WORK.md](FUTURE_WORK.md).
 
+## Title protocol
+
+Every downstream task uses:
+
+`Constellary · <TaskID> · <Role> · <ShortGoal>`
+
+The host title budget is 34 NFC-normalized Unicode code points. Apply Unicode
+normalization (NFC), collapse redundant whitespace, and deterministically compress
+the short goal before creation. Preserve the project name, TaskID, and role;
+verify the actual returned/displayed title after creation. Do not accept
+implicit host truncation. A concrete compact title is
+`Constellary · T01 · 实现 · Desktop适配`; reviewer, repair, and re-review titles
+use `T01-R1`, `T01-F1`, and `T01-R2`.
+
 ## Runtime defaults
 
-All downstream roles, including implementation workers and independent reviewers, default to Luna Max: `gpt-5.6-luna` with `max` reasoning. A current user instruction or project configuration may override the model, the reasoning level, or both for any role without a repeated confirmation prompt.
+All downstream roles, including implementation workers and independent
+reviewers, default to Luna Max: `gpt-5.6-luna` with `max` reasoning. A current
+user instruction or project configuration may override the model, reasoning
+level, or both for any role without a repeated confirmation prompt. The Skill
+does not silently promote a reviewer.
 
-Luna Max is suitable for bounded, routine review. For security, architecture, concurrency, data-integrity, or release-critical review, the user or project configuration may select Sol or another stronger configured reviewer. The Skill never promotes a reviewer automatically when nobody requested or configured an escalation. When the host exposes the effective runtime, the parent should record it and report any substitution honestly.
-
-Implementation and review use different fresh independent tasks. Review is read-only by default and any repair is dispatched as a new bounded implementation task.
-
-## Choosing direct Sol or orchestration
-
-Use a direct Sol task when the change is small, tightly coupled, or requires
-continuous architectural judgment. Use this Skill when two or more bounded
-responsibilities can be completed independently, such as implementation,
-testing, documentation, or separate investigations.
-
-For security, architecture, concurrency, data-integrity, or release-critical
-work, a practical hybrid is a Sol parent or reviewer with Luna Max workers. The
-six-downstream-window limit is a ceiling, not a target; start with only the
-independent workers that the task genuinely needs.
+Implementation and review always use different fresh independent tasks. Review
+is read-only by default; any repair is a new bounded implementation task. A
+sidebar-visible peer is logically correlated by creator identity, source thread,
+project context, task ledger, and report route.
 
 ## Reports, event waits, and polling
 
-These three ideas are different:
+Every worker actively sends one structured terminal report to its immediate
+coordinator. A result left only in the worker task is not delivered. The parent
+waits for matching messages, completion, blocker, failure, or user events and
+does not routinely poll unchanged tasks. It correlates `task_id` and `thread_id`,
+deduplicates a matching completion event, and keeps `report_received` separate
+from the review verdict and `review_source`.
 
-- **Worker report:** the structured result a worker or reviewer actively sends to its immediate coordinator when it finishes or is blocked. It carries the work result, changed paths, checks, evidence, blockers, concerns, and uncertainty.
-- **Event wait:** the parent sleeps until a relevant message or completion, blocker, failure, or user event wakes it. The parent can wait across its active tasks instead of watching them continuously.
-- **Polling:** repeatedly opening or inspecting unchanged child tasks to see whether anything changed. Routine polling is forbidden by the Skill.
+## Execution environment
 
-Use the report and event wait together: the worker sends its report, while the parent waits for the matching activity. A matching completion event that arrives first only wakes the parent; it does not mean that the structured report has been received or validated. Only after the parent validates the matching structured report does it mark `report_received` (report received). If the structured report arrives first, a later matching completion event is the second delivery and is deduplicated. In either order, each task records one terminal result; the matching delivery through the other route cannot create a second result.
+Coordination and file execution are separate decisions. The public policy is
+`execution_environment: auto_safe`: use Local for a prepared isolated copy or
+serialized single-writer work, and Worktree for concurrent writers in a Git
+repository or material overlap risk. A user may override the policy. If safe
+isolation is unavailable, serialize or report `BLOCKED`.
 
-## Projects and child tasks
+## Future CLI adapter
 
-An independent child task uses the parent's registered Codex project by default. A worktree is an isolated workspace inside that same project; it does not make the child projectless. Projectless execution is limited to genuinely no-file work or an explicit user request.
+CLI is not supported or executable in `v2.0.0`. [FUTURE_WORK.md](FUTURE_WORK.md)
+records an explicit opt-in study for lifecycle supervision, cleanup, structured
+report transport, identity correlation, concurrency, reviewer creation,
+security, cross-platform behavior, and end-to-end verification. It must never
+become an automatic Desktop fallback.
 
-After creating a child, the coordinator verifies its project context. If the intended project cannot be selected or verified, the coordinator stops before dispatch and does not silently create a projectless window.
-
-When several children run at once, the parent pairs each `task_id` with its `thread_id` in the task ledger. Message order does not decide ownership. Reports and completion events are matched by those identifiers; an active report plus its matching completion event produces one terminal result, not two.
-
-By default, the parent runs no more than six downstream windows at the same
-time, which means seven active windows total when the parent is included. The
-user may choose a different limit, but the current limit is a hard ceiling and
-must never be exceeded. If more tasks remain, finish the current batch before
-starting the next batch.
-
-The source address received by a child is its parent's address, not the child's own address. A child that later creates another task must not copy that incoming address and pretend it is its own; the host's reply route is the default, and a direct address is used only when the coordinator's exact address is confirmed by the host.
-
-## Review artifacts and capability fallbacks
-
-The reviewer receives the original goal, acceptance criteria, required checks, and a concrete `review_source` for the actual artifact. That source may be the current shared workspace or an isolated worktree, commit, branch, handoff, or diff. The reviewer does not need the implementer's reasoning or self-assessment and must not review an inaccessible or stale baseline.
-
-Every worker must send a structured terminal report to its immediate coordinator before ending. A result left only in the worker task is not delivered.
-
-Planning, durable state, messaging, Git, and worktree isolation are optional capabilities. The workflow uses the strongest available capability, then an ordinary project-local record, then short-lived task context. Reduced continuity or isolation is reported honestly; it does not become an excuse to invent dependencies or silently change scope.
-
-Minimal usage:
-
-```text
-Use $orchestrating-codex-task-windows to split this project into independent implementation and review tasks, collect each required report, and keep final integration in the parent task.
-```
-
-## Safety boundary
-
-The Skill does not automatically merge, push, publish, create or change remotes, perform destructive cleanup, or make final release claims. Those actions remain subject to explicit authority and parent-owned verification.
-
-When the system already grants full access, a child must not ask for permission again. A command failure by itself is not a permission problem: check the command, working directory, absolute path, quoting, shell, and process startup first. Ask only when the task truly needs authority that has not already been granted.
-
-## Validate
+## Validation
 
 Run the deterministic contract and hygiene checks from the repository root:
 
@@ -99,8 +135,11 @@ Run the deterministic contract and hygiene checks from the repository root:
 python -B scripts/validate_package.py
 ```
 
-The checks cover Skill contracts, machine-specific paths, live task or project identifiers, secret-shaped values, unresolved authoring markers, broken Skill references, and packaged cache artifacts.
+The checks cover Skill contracts, multilingual links, machine-specific paths,
+live task or project identifiers, secret-shaped values, unresolved authoring
+markers, broken Skill references, old-name residue, and packaged cache
+artifacts.
 
-## Licensing
+## License
 
 This repository is released under the [MIT License](LICENSE).
